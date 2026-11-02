@@ -16,6 +16,9 @@ export const Colors = {
     textSecondary: '#60646C',
     accent: '#208AEF',
     danger: '#E5484D',
+    slotAvailable: '#4CC38A',
+    slotPending: '#FFC53D',
+    slotBooked: '#5CD3F2',
   },
   dark: {
     text: '#ffffff',
@@ -25,6 +28,9 @@ export const Colors = {
     textSecondary: '#B0B4BA',
     accent: '#3C9FFE',
     danger: '#FF6369',
+    slotAvailable: '#3B9C6E',
+    slotPending: '#D9A31F',
+    slotBooked: '#3AA8C9',
   },
 } as const;
 

@@ -55,10 +55,20 @@ function getUpdateDisplay(update: Update): UpdateDisplay {
         icon: { ios: 'person.badge.plus', android: 'person_add', web: 'person_add' },
         color: 'accent',
       };
+    case 'lesson-requested':
+      return {
+        title: 'שיעור נקבע',
+        body: `קבעת שיעור עם ${update.studentName}: ${formatLessonTime(update.lessonTime)} · ממתין לאישור התלמיד`,
+        icon: { ios: 'calendar.badge.clock', android: 'schedule', web: 'schedule' },
+        color: 'slotPending',
+      };
     case 'lesson-confirmed':
       return {
         title: 'שיעור אושר',
-        body: `${update.studentName} אישר/ה את מועד השיעור: ${formatLessonTime(update.lessonTime)}`,
+        body:
+          update.approvedBy === 'student'
+            ? `${update.studentName} אישר/ה את מועד השיעור: ${formatLessonTime(update.lessonTime)}`
+            : `אישרת את השיעור עם ${update.studentName}: ${formatLessonTime(update.lessonTime)}`,
         icon: { ios: 'calendar.badge.checkmark', android: 'event_available', web: 'event_available' },
         color: 'accent',
       };
