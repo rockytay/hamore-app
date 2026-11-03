@@ -22,7 +22,7 @@ export default function HomeScreen() {
             המורה
           </ThemedText>
           <ThemedText themeColor="textSecondary" style={styles.centered}>
-            {user ? `שלום ${user.name}` : 'שלום'}
+            {user ? `שלום ${user.firstName}` : 'שלום'}
           </ThemedText>
         </ThemedView>
 

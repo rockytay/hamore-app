@@ -85,7 +85,7 @@ function getSampleEvents(): CalendarEvent[] {
   return events;
 }
 
-function getEventStart(event: CalendarEvent) {
+export function getEventStart(event: CalendarEvent) {
   const [year, month, day] = event.dateKey.split('-').map(Number);
   return new Date(year, month - 1, day, 0, event.startMin);
 }

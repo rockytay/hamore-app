@@ -15,6 +15,7 @@ import {
   TIME_STEP_MIN,
   type CalendarEvent,
 } from '@/hooks/use-calendar-events';
+import { useCurrentUser } from '@/hooks/use-current-user';
 import { useStudents } from '@/hooks/use-students';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -56,6 +57,7 @@ export function EventEditor({
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const students = useStudents();
+  const debtWarnings = useCurrentUser()?.settings.debtWarnings ?? true;
   const [type, setType] = useState<EditorType>(initialType);
   const [startMin, setStartMin] = useState(initialStartMin);
   const [endMin, setEndMin] = useState(initialEndMin);
@@ -82,7 +84,7 @@ export function EventEditor({
     if (!event) {
       if (type === 'available') {
         save({ ...times, id: createEventId(), status: 'available' });
-      } else if (student && student.balance < 0 && !ignoreDebt) {
+      } else if (student && student.balance < 0 && debtWarnings && !ignoreDebt) {
         setShowDebtWarning(true);
       } else if (student) {
         save({

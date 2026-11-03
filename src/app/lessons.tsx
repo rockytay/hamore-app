@@ -7,6 +7,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { formatShortDate, SlotLegend, snapMinute, WeekCalendar } from '@/components/week-calendar';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { useCurrentUser } from '@/hooks/use-current-user';
 import {
   DAY_END_MIN,
   isLesson,
@@ -14,6 +15,7 @@ import {
   type CalendarEvent,
 } from '@/hooks/use-calendar-events';
 
+/** Used when the teacher has not set a lesson length in their personal details. */
 const DEFAULT_DURATION_MIN = 60;
 
 function getWeekDays(weekOffset: number) {
@@ -49,6 +51,7 @@ export default function LessonsScreen() {
   const [weekOffset, setWeekOffset] = useState(0);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const { events, saveEvent, removeEvent, approve, studentApprove } = useCalendarEvents();
+  const lessonDurationMin = useCurrentUser()?.lessonDurationMin ?? DEFAULT_DURATION_MIN;
 
   const days = getWeekDays(weekOffset);
 
@@ -58,7 +61,7 @@ export default function LessonsScreen() {
       day,
       type,
       startMin,
-      endMin: Math.min(startMin + DEFAULT_DURATION_MIN, DAY_END_MIN),
+      endMin: Math.min(startMin + lessonDurationMin, DAY_END_MIN),
     });
   };
 

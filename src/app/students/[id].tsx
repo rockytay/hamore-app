@@ -61,6 +61,10 @@ export default function StudentDetailsScreen() {
           <Pressable onPress={() => Linking.openURL(`tel:${student.phone.replace(/-/g, '')}`)}>
             <ThemedText themeColor="accent">{student.phone}</ThemedText>
           </Pressable>
+          <ThemedText type="small" themeColor="textSecondary">
+            {student.theoryPassed ? 'עבר/ה תאוריה' : 'טרם עבר/ה תאוריה'}
+            {student.idNumber ? ` · ת״ז ${student.idNumber}` : ''}
+          </ThemedText>
         </View>
 
         <View style={styles.stats}>

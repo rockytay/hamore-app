@@ -3,6 +3,7 @@ import * as SplashScreen from 'expo-splash-screen';
 
 import { CalendarEventsProvider } from '@/hooks/use-calendar-events';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { CurrentUserProvider } from '@/hooks/use-current-user';
 import { StudentsProvider } from '@/hooks/use-students';
 import { UpdatesProvider } from '@/hooks/use-updates';
 
@@ -15,14 +16,16 @@ export default function TabLayout() {
   const colorScheme = useColorScheme();
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <UpdatesProvider>
-        <StudentsProvider>
-          <CalendarEventsProvider>
-            <AnimatedSplashOverlay />
-            <AppTabs />
-          </CalendarEventsProvider>
-        </StudentsProvider>
-      </UpdatesProvider>
+      <CurrentUserProvider>
+        <UpdatesProvider>
+          <StudentsProvider>
+            <CalendarEventsProvider>
+              <AnimatedSplashOverlay />
+              <AppTabs />
+            </CalendarEventsProvider>
+          </StudentsProvider>
+        </UpdatesProvider>
+      </CurrentUserProvider>
     </ThemeProvider>
   );
 }

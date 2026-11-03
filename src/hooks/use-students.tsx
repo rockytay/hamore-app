@@ -1,5 +1,7 @@
 import { createContext, useContext, useState, type PropsWithChildren } from 'react';
 
+import { useAddUpdate } from '@/hooks/use-updates';
+
 /** Israeli driving licence categories. */
 export const LICENSE_CATEGORIES = {
   A2: 'אופנוע עד 14.6 כ״ס',
@@ -41,6 +43,17 @@ export type Student = {
   lessonNotes: LessonNote[];
   /** In shekels: positive is prepaid credit, negative is debt to the teacher. */
   balance: number;
+  /** Israeli ID number (teudat zehut), needed for the student's licence file. */
+  idNumber?: string;
+  /** Passed the theory test. */
+  theoryPassed?: boolean;
+  createdAt: Date;
+};
+
+/** What the teacher fills in when adding a student; the rest is filled in automatically. */
+export type NewStudent = Omit<Student, 'id' | 'createdAt' | 'lessonNotes'> & {
+  /** Optional first note, e.g. the student's driving experience so far. */
+  firstNote?: string;
 };
 
 export type PaymentStatus = 'credit' | 'even' | 'debt';
@@ -60,7 +73,7 @@ function daysAgo(days: number) {
   return date;
 }
 
-const SAMPLE_STUDENTS: Student[] = [
+const SAMPLE_STUDENTS: Student[] = ([
   {
     id: '1',
     name: 'דנה כהן',
@@ -161,27 +174,79 @@ const SAMPLE_STUDENTS: Student[] = [
     ],
     balance: -150,
   },
-];
+] satisfies Omit<Student, 'createdAt'>[]).map((student, index) => ({
+  ...student,
+  theoryPassed: student.lessonsCompleted > 0,
+  createdAt: daysAgo(30 + index * 7),
+}));
+
+function createStudentId() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+/** Digits only, e.g. "050-123 4567" → "0501234567". */
+export function normalizePhone(phone: string) {
+  return phone.replace(/\D/g, '');
+}
+
+/** An Israeli mobile number: 10 digits starting with 05. */
+export function isValidPhone(phone: string) {
+  return /^05\d{8}$/.test(normalizePhone(phone));
+}
+
+/** Formats an Israeli mobile number as 050-1234567. */
+export function formatPhone(phone: string) {
+  const digits = normalizePhone(phone);
+  return digits.length === 10 ? `${digits.slice(0, 3)}-${digits.slice(3)}` : phone.trim();
+}
+
+/** Checks an Israeli ID number with its check digit. */
+export function isValidIsraeliId(id: string) {
+  const digits = id.replace(/\D/g, '');
+  if (digits.length < 5 || digits.length > 9) return false;
+  const sum = [...digits.padStart(9, '0')].reduce((total, char, index) => {
+    const product = Number(char) * ((index % 2) + 1);
+    return total + (product > 9 ? product - 9 : product);
+  }, 0);
+  return sum % 10 === 0;
+}
 
 type StudentsContextValue = {
   students: Student[];
   addLessonNote: (studentId: string, text: string) => void;
+  addStudent: (input: NewStudent) => Student;
 };
 
 const StudentsContext = createContext<StudentsContextValue | null>(null);
 
 /**
- * Holds the teacher's students for the whole app.
+ * Holds the teacher's students for the whole app. Must be inside UpdatesProvider.
  * The app is not connected to a backend yet, so changes are kept in memory only.
+ * When the database is connected, addStudent and addLessonNote become API calls
+ * and the new id comes from the server.
  */
 export function StudentsProvider({ children }: PropsWithChildren) {
+  const addUpdate = useAddUpdate();
   const [students, setStudents] = useState<Student[]>(() =>
     SHOW_SAMPLE_STUDENTS ? SAMPLE_STUDENTS : []
   );
 
+  const addStudent = ({ firstNote, ...input }: NewStudent) => {
+    const createdAt = new Date();
+    const student: Student = {
+      ...input,
+      id: createStudentId(),
+      createdAt,
+      lessonNotes: firstNote ? [{ id: createStudentId(), date: createdAt, text: firstNote }] : [],
+    };
+    setStudents((current) => [student, ...current]);
+    addUpdate({ kind: 'new-student', studentName: student.name });
+    return student;
+  };
+
   const addLessonNote = (studentId: string, text: string) => {
     const note: LessonNote = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      id: createStudentId(),
       date: new Date(),
       text,
     };
@@ -194,7 +259,7 @@ export function StudentsProvider({ children }: PropsWithChildren) {
     );
   };
 
-  return <StudentsContext value={{ students, addLessonNote }}>{children}</StudentsContext>;
+  return <StudentsContext value={{ students, addLessonNote, addStudent }}>{children}</StudentsContext>;
 }
 
 function useStudentsContext() {
@@ -215,4 +280,9 @@ export function useStudent(id: string | undefined): Student | undefined {
 /** Add a lesson note (newest first) to a student's profile. */
 export function useAddLessonNote() {
   return useStudentsContext().addLessonNote;
+}
+
+/** Add a new student; returns the saved student. */
+export function useAddStudent() {
+  return useStudentsContext().addStudent;
 }
