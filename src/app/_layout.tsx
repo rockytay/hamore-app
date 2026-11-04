@@ -1,31 +1,52 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
+import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 
+import { AuthProvider, useSession } from '@/hooks/use-auth';
 import { CalendarEventsProvider } from '@/hooks/use-calendar-events';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { CurrentUserProvider } from '@/hooks/use-current-user';
 import { StudentsProvider } from '@/hooks/use-students';
 import { UpdatesProvider } from '@/hooks/use-updates';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
-import AppTabs from '@/components/app-tabs';
 
 SplashScreen.preventAutoHideAsync();
 
-export default function TabLayout() {
+export default function RootLayout() {
   const colorScheme = useColorScheme();
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <CurrentUserProvider>
+      <AuthProvider>
         <UpdatesProvider>
           <StudentsProvider>
             <CalendarEventsProvider>
+              <RootNavigator />
               <AnimatedSplashOverlay />
-              <AppTabs />
             </CalendarEventsProvider>
           </StudentsProvider>
         </UpdatesProvider>
-      </CurrentUserProvider>
+      </AuthProvider>
     </ThemeProvider>
+  );
+}
+
+/** Shows sign-in when nobody is signed in, otherwise the teacher or student side by role. */
+function RootNavigator() {
+  const session = useSession();
+
+  return (
+    <Stack screenOptions={{ headerShown: false }}>
+      <Stack.Protected guard={session?.role === 'teacher'}>
+        <Stack.Screen name="(teacher)" />
+      </Stack.Protected>
+
+      <Stack.Protected guard={session?.role === 'student'}>
+        <Stack.Screen name="student" />
+      </Stack.Protected>
+
+      <Stack.Protected guard={!session}>
+        <Stack.Screen name="sign-in" />
+        <Stack.Screen name="sign-up" options={{ animation: 'slide_from_left' }} />
+      </Stack.Protected>
+    </Stack>
   );
 }

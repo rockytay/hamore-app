@@ -62,7 +62,7 @@ export default function ProfileScreen() {
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
-        {user ? <Profile user={user} /> : <SignedOut />}
+        {user && <Profile user={user} />}
       </SafeAreaView>
     </ThemedView>
   );
@@ -569,25 +569,6 @@ function Button({
   );
 }
 
-function SignedOut() {
-  const theme = useTheme();
-  const { signIn } = useCurrentUserActions();
-  return (
-    <View style={styles.signedOut}>
-      <SymbolView
-        name={{ ios: 'person.crop.circle', android: 'account_circle', web: 'account_circle' }}
-        size={72}
-        tintColor={theme.textSecondary}
-      />
-      <ThemedText type="subtitle">לא מחוברים</ThemedText>
-      <ThemedText type="small" themeColor="textSecondary" style={styles.centered}>
-        התחברו כדי לנהל את התלמידים, השיעורים והפרטים שלכם.
-      </ThemedText>
-      <Button label="התחברות" onPress={signIn} />
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -709,13 +690,6 @@ const styles = StyleSheet.create({
   },
   buttonTextPrimary: {
     color: '#ffffff',
-  },
-  signedOut: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.three,
-    padding: Spacing.four,
   },
   pressed: {
     opacity: 0.7,
