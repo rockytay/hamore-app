@@ -43,6 +43,9 @@ export type CurrentUser = {
   phone: string;
   email: string;
   city: string;
+  /** The teacher's own driving licence number. */
+  driverLicenseNumber: string;
+  /** Teaching permit number from the Ministry of Transport. */
   teacherLicenseNumber: string;
   teachingCategories: LicenseCategory[];
   carModel: string;

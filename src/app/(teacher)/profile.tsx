@@ -146,11 +146,18 @@ function Profile({ user }: { user: CurrentUser }) {
 
       <Section title="פרטים מקצועיים">
         <Field
-          label="מספר רישיון הוראה"
+          label="מספר רישיון נהיגה"
+          value={shown.driverLicenseNumber}
+          editing={editing}
+          keyboardType="number-pad"
+          onChange={(text) => change({ driverLicenseNumber: text.replace(/\D/g, '') })}
+        />
+        <Field
+          label="מספר היתר הוראה"
           value={shown.teacherLicenseNumber}
           editing={editing}
           keyboardType="number-pad"
-          onChange={(teacherLicenseNumber) => change({ teacherLicenseNumber })}
+          onChange={(text) => change({ teacherLicenseNumber: text.replace(/\D/g, '') })}
         />
         <ChoiceField
           label="דרגות הוראה"

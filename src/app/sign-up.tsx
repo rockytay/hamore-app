@@ -16,11 +16,17 @@ import { formatPhone, isValidPhone } from '@/hooks/use-students';
 
 const MIN_PASSWORD_LENGTH = 6;
 
-type Draft = Omit<SignUpInput, 'role'> & { confirmPassword: string };
+type Draft = Omit<SignUpInput, 'role' | 'driverLicenseNumber' | 'teacherLicenseNumber'> & {
+  driverLicenseNumber: string;
+  teacherLicenseNumber: string;
+  confirmPassword: string;
+};
 
 const EMPTY_DRAFT: Draft = {
   firstName: '',
   lastName: '',
+  driverLicenseNumber: '',
+  teacherLicenseNumber: '',
   phone: '',
   email: '',
   password: '',
@@ -28,8 +34,14 @@ const EMPTY_DRAFT: Draft = {
 };
 
 /** Returns an error message in Hebrew, or null if the account can be created. */
-function validate(draft: Draft) {
+function validate(draft: Draft, role: Role) {
   if (!draft.firstName.trim() || !draft.lastName.trim()) return 'יש למלא שם פרטי ושם משפחה.';
+  if (role === 'teacher' && !draft.driverLicenseNumber) {
+    return 'יש להזין מספר רישיון נהיגה, כדי שנוכל לאמת שאתם מורים לנהיגה.';
+  }
+  if (role === 'teacher' && !draft.teacherLicenseNumber) {
+    return 'יש להזין מספר היתר הוראה, כדי שנוכל לאמת שאתם מורים לנהיגה.';
+  }
   if (!isValidPhone(draft.phone)) return 'יש להזין מספר נייד תקין (05X-XXXXXXX).';
   if (!/^\S+@\S+\.\S+$/.test(draft.email.trim())) return 'כתובת האימייל אינה תקינה.';
   if (draft.password.length < MIN_PASSWORD_LENGTH) {
@@ -49,7 +61,7 @@ export default function SignUpScreen() {
   const change = (changes: Partial<Draft>) => setDraft((current) => ({ ...current, ...changes }));
 
   const submit = () => {
-    const message = validate(draft);
+    const message = validate(draft, role);
     if (message) {
       setError(message);
       return;
@@ -63,6 +75,10 @@ export default function SignUpScreen() {
         phone: formatPhone(draft.phone),
         email: draft.email.trim(),
         password: draft.password,
+        ...(role === 'teacher' && {
+          driverLicenseNumber: draft.driverLicenseNumber,
+          teacherLicenseNumber: draft.teacherLicenseNumber,
+        }),
       })
     );
   };
@@ -102,6 +118,24 @@ export default function SignUpScreen() {
             />
           </View>
         </View>
+        {role === 'teacher' && (
+          <>
+            <FormField
+              label="מספר רישיון נהיגה"
+              value={draft.driverLicenseNumber}
+              onChangeText={(text) => change({ driverLicenseNumber: text.replace(/\D/g, '') })}
+              placeholder="לאימות שאתם מורים לנהיגה"
+              keyboardType="number-pad"
+            />
+            <FormField
+              label="מספר היתר הוראה"
+              value={draft.teacherLicenseNumber}
+              onChangeText={(text) => change({ teacherLicenseNumber: text.replace(/\D/g, '') })}
+              placeholder="לאימות שאתם מורים לנהיגה"
+              keyboardType="number-pad"
+            />
+          </>
+        )}
         <FormField
           label="טלפון נייד"
           value={draft.phone}

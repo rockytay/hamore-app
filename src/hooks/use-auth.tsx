@@ -34,6 +34,13 @@ export type SignUpInput = {
   phone: string;
   email: string;
   password: string;
+  /**
+   * Teachers only: their driving licence and teaching permit numbers, so we can check they are
+   * really driving teachers. Not verified yet; when the database is connected, new teachers
+   * should stay unverified until both are checked.
+   */
+  driverLicenseNumber?: string;
+  teacherLicenseNumber?: string;
 };
 
 function daysFromNow(days: number) {
@@ -56,6 +63,7 @@ const SAMPLE_ACCOUNTS: Account[] = [
       phone: '050-9876543',
       email: 'israel@example.com',
       city: 'תל אביב',
+      driverLicenseNumber: '7654321',
       teacherLicenseNumber: '123456',
       teachingCategories: ['B', 'A2', 'A1'],
       carModel: 'מאזדה 3',
@@ -95,7 +103,8 @@ function newTeacherProfile(input: SignUpInput): CurrentUser {
     phone: input.phone,
     email: input.email,
     city: '',
-    teacherLicenseNumber: '',
+    driverLicenseNumber: input.driverLicenseNumber ?? '',
+    teacherLicenseNumber: input.teacherLicenseNumber ?? '',
     teachingCategories: ['B'],
     carModel: '',
     transmission: 'manual',
