@@ -60,27 +60,30 @@ export default function SignUpScreen() {
 
   const change = (changes: Partial<Draft>) => setDraft((current) => ({ ...current, ...changes }));
 
-  const submit = () => {
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
     const message = validate(draft, role);
     if (message) {
       setError(message);
       return;
     }
     // On success the root layout switches to the teacher or student side.
-    setError(
-      signUp({
-        role,
-        firstName: draft.firstName.trim(),
-        lastName: draft.lastName.trim(),
-        phone: formatPhone(draft.phone),
-        email: draft.email.trim(),
-        password: draft.password,
-        ...(role === 'teacher' && {
-          driverLicenseNumber: draft.driverLicenseNumber,
-          teacherLicenseNumber: draft.teacherLicenseNumber,
-        }),
-      })
-    );
+    setBusy(true);
+    const result = await signUp({
+      role,
+      firstName: draft.firstName.trim(),
+      lastName: draft.lastName.trim(),
+      phone: formatPhone(draft.phone),
+      email: draft.email.trim(),
+      password: draft.password,
+      ...(role === 'teacher' && {
+        driverLicenseNumber: draft.driverLicenseNumber,
+        teacherLicenseNumber: draft.teacherLicenseNumber,
+      }),
+    });
+    setBusy(false);
+    setError(result);
   };
 
   const goToSignIn = () => {
@@ -180,6 +183,7 @@ export default function SignUpScreen() {
         <PrimaryButton
           label={role === 'teacher' ? 'הרשמה כמורה' : 'הרשמה כתלמיד/ה'}
           onPress={submit}
+          busy={busy}
         />
       </View>
 

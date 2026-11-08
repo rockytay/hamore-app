@@ -53,9 +53,10 @@ export function SubscriptionCard({ user }: { user: CurrentUser }) {
       upgrade ? 'שדרוג מסלול' : 'מעבר מסלול',
       `לעבור למסלול ${next.name} – עד ${next.maxStudents} תלמידים ב־${formatShekels(next.monthlyPrice)} לחודש? המחיר החדש ייגבה בחיוב הבא.`,
       'מעבר למסלול',
-      () => {
-        updateUser({ subscription: { ...user.subscription, planId: next.id } });
+      async () => {
         setChoosing(false);
+        const saveError = await updateUser({ subscription: { ...user.subscription, planId: next.id } });
+        if (saveError) showMessage('שגיאה', saveError);
       },
       { destructive: false }
     );

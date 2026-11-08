@@ -22,6 +22,7 @@ import {
   isValidPhone,
   LICENSE_CATEGORIES,
   normalizePhone,
+  StudentSaveError,
   TRANSMISSION_LABELS,
   useAddStudent,
   useStudents,
@@ -29,6 +30,7 @@ import {
   type Transmission,
 } from '@/hooks/use-students';
 import { useTheme } from '@/hooks/use-theme';
+import { showMessage } from '@/utils/dialogs';
 
 type BalanceType = 'even' | 'credit' | 'debt';
 
@@ -110,8 +112,10 @@ export default function AddStudentScreen() {
     return result;
   };
 
-  const submit = () => {
-    if (planFull) return;
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    if (planFull || saving) return;
     const found = validate();
     if (Object.keys(found).length > 0) {
       setErrors(found);
@@ -119,8 +123,12 @@ export default function AddStudentScreen() {
     }
 
     const amount = Number(form.balanceAmount) || 0;
-    const student = addStudent({
-      name: `${form.firstName.trim()} ${form.lastName.trim()}`,
+    setSaving(true);
+    let student;
+    try {
+      student = await addStudent({
+      firstName: form.firstName.trim(),
+      lastName: form.lastName.trim(),
       phone: formatPhone(form.phone),
       idNumber: form.idNumber.replace(/\D/g, '') || undefined,
       licenseCategory: form.licenseCategory,
@@ -129,7 +137,18 @@ export default function AddStudentScreen() {
       lessonsCompleted: form.lessonsCompleted,
       balance: form.balanceType === 'credit' ? amount : form.balanceType === 'debt' ? -amount : 0,
       firstNote: form.firstNote.trim() || undefined,
-    });
+      });
+    } catch (error) {
+      const message = error instanceof StudentSaveError ? error.message : 'שמירת התלמיד נכשלה. יש לנסות שוב.';
+      if (error instanceof StudentSaveError && error.field) {
+        setErrors({ [error.field]: message });
+      } else {
+        showMessage('שגיאה', message);
+      }
+      return;
+    } finally {
+      setSaving(false);
+    }
 
     Keyboard.dismiss();
     setForm(emptyForm());
@@ -323,15 +342,15 @@ export default function AddStudentScreen() {
           )}
 
           <Pressable
-            disabled={planFull}
+            disabled={planFull || saving}
             onPress={submit}
             style={({ pressed }) => [
               styles.submit,
-              { backgroundColor: planFull ? theme.backgroundSelected : theme.accent },
+              { backgroundColor: planFull || saving ? theme.backgroundSelected : theme.accent },
               pressed && styles.pressed,
             ]}>
             <ThemedText type="smallBold" style={styles.whiteText}>
-              הוספת תלמיד
+              {saving ? 'שומר…' : 'הוספת תלמיד'}
             </ThemedText>
           </Pressable>
         </ScrollView>

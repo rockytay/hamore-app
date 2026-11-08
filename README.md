@@ -1,56 +1,74 @@
-# Welcome to your Expo app 👋
+# המורה — Hamore App
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+An app for driving instructors to manage students, lessons, payments and tests.
+Expo (React Native) app with a Supabase backend (Postgres + Auth).
 
-## Get started
+## First-time setup
 
-1. Install dependencies
-
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **src/app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+You need Node.js and **Docker Desktop** (running) for the local database.
 
 ```bash
-npm run reset-project
+npm install
+npm run db:start          # starts Supabase locally in Docker (first run downloads images)
 ```
 
-This command will move the starter code to the **example** directory and create a blank **src/app** directory where you can start developing.
+`db:start` prints the local URLs and keys. Copy `.env.example` to `.env.local` and fill in:
 
-### Other setup steps
+- `EXPO_PUBLIC_SUPABASE_URL` — the **API URL** (`http://127.0.0.1:54321`)
+- `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` — the **Publishable** key
+- `SUPABASE_SECRET_KEY` — the **Secret** key (only used by the seed script, never by the app)
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+Run `npx supabase status` any time to see them again.
 
-## Learn more
+> Testing on a phone with Expo Go? `127.0.0.1` on the phone is the phone itself.
+> Use your computer's Wi-Fi IP instead, e.g. `http://192.168.1.20:54321`.
 
-To learn more about developing your project with Expo, look at the following resources:
+Then add the sample data and start the app:
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+```bash
+npm run seed:dev          # sample teacher, student, 8 students, calendar, lessons and payments
+npm start
+```
 
-## Join the community
+Sample sign-in: `israel@example.com` / `123456` (teacher), `dana@example.com` / `123456` (student).
+Development builds show a button on the sign-in screen that fills these in.
 
-Join our community of developers creating universal apps.
+## Database
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+| Command | What it does |
+| --- | --- |
+| `npm run db:start` / `db:stop` | Start or stop local Supabase |
+| `npm run db:reset` | Wipe the local database and re-run all migrations (then `seed:dev` again) |
+| `npm run db:test` | Run the database tests in `supabase/tests` (security, calendar, balances) |
+
+Supabase Studio (a table viewer) runs at http://127.0.0.1:54323 while the database is up.
+
+- Schema changes go in a new file in `supabase/migrations/` — never edit one that has already run.
+  `npx supabase migration new <name>` creates it.
+- Every table has row-level security: a teacher can only read and change their own organization's
+  data. `supabase/tests/database/rls.test.sql` and `lessons.test.sql` prove it; add checks for every new table.
+- Balances and lesson counts are never stored. The `student_balances` view calculates them:
+  opening balance + payments − price of booked lessons that have ended.
+- When a user signs up, the database creates their profile. For a teacher it also creates an
+  organization and the default lesson types.
+
+### Moving to the hosted project later
+
+Create the Supabase project in an **EU region**, then:
+
+```bash
+npx supabase login
+npx supabase link --project-ref <your-project-ref>
+npx supabase db push      # applies the same migrations
+```
+
+and put the hosted URL and publishable key in `.env.local`. Hosted projects require email
+confirmation on sign-up by default; the app handles that with a "check your email" message.
+
+## Checks
+
+```bash
+npx tsc --noEmit
+npm run lint
+npm run db:test
+```

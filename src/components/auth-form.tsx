@@ -104,19 +104,30 @@ export function FormError({ message }: { message: string | null }) {
   );
 }
 
-export function PrimaryButton({ label, onPress }: { label: string; onPress: () => void }) {
+export function PrimaryButton({
+  label,
+  onPress,
+  busy = false,
+}: {
+  label: string;
+  onPress: () => void;
+  /** Shows a waiting label and ignores presses, e.g. while signing in. */
+  busy?: boolean;
+}) {
   const theme = useTheme();
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityState={{ busy, disabled: busy }}
+      disabled={busy}
       onPress={onPress}
       style={({ pressed }) => [
         styles.button,
-        { backgroundColor: theme.accent },
+        { backgroundColor: busy ? theme.backgroundSelected : theme.accent },
         pressed && styles.pressed,
       ]}>
       <ThemedText type="smallBold" style={styles.buttonText}>
-        {label}
+        {busy ? 'רגע…' : label}
       </ThemedText>
     </Pressable>
   );

@@ -15,7 +15,7 @@ import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { SAMPLE_PASSWORD, useAuth, type Role } from '@/hooks/use-auth';
 
-/** Sample accounts from use-auth, offered in development builds only. */
+/** Sample accounts created by `npm run seed:dev`, offered in development builds only. */
 const SAMPLE_EMAILS: Record<Role, string> = {
   teacher: 'israel@example.com',
   student: 'dana@example.com',
@@ -27,14 +27,18 @@ export default function SignInScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  const submit = () => {
+  const submit = async () => {
     if (!email.trim() || !password) {
       setError('יש להזין אימייל וסיסמה.');
       return;
     }
     // On success the root layout switches to the teacher or student side.
-    setError(signIn(role, email, password));
+    setBusy(true);
+    const result = await signIn(role, email, password);
+    setBusy(false);
+    setError(result);
   };
 
   const changeRole = (next: Role) => {
@@ -79,6 +83,7 @@ export default function SignInScreen() {
         <PrimaryButton
           label={role === 'teacher' ? 'התחברות כמורה' : 'התחברות כתלמיד/ה'}
           onPress={submit}
+          busy={busy}
         />
       </View>
 

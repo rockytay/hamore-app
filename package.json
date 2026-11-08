@@ -4,6 +4,7 @@
   "main": "expo-router/entry",
   "dependencies": {
     "@expo/ui": "~58.0.25",
+    "@supabase/supabase-js": "^2.119.0",
     "expo": "^58.0.0",
     "expo-constants": "~58.0.14",
     "expo-device": "~58.0.5",
@@ -14,6 +15,7 @@
     "expo-localization": "~58.0.5",
     "expo-router": "~58.0.28",
     "expo-splash-screen": "~58.0.12",
+    "expo-sqlite": "~58.0.13",
     "expo-status-bar": "~58.0.4",
     "expo-symbols": "~58.0.4",
     "expo-system-ui": "~58.0.7",
@@ -32,6 +34,7 @@
     "@types/react": "~19.3.0",
     "eslint": "^9.0.0",
     "eslint-config-expo": "~58.0.4",
+    "supabase": "^3.0.0",
     "typescript": "~6.0.3"
   },
   "scripts": {
@@ -40,7 +43,12 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "db:start": "supabase start",
+    "db:stop": "supabase stop",
+    "db:reset": "supabase db reset",
+    "db:test": "supabase test db",
+    "seed:dev": "node --env-file=.env.local scripts/seed-dev.mjs"
   },
   "private": true
 }

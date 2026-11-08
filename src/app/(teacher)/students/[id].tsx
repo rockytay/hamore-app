@@ -17,12 +17,16 @@ import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 import {
   getPaymentStatus,
   LICENSE_CATEGORIES,
+  PAYMENT_METHOD_LABELS,
   TRANSMISSION_LABELS,
   useAddLessonNote,
+  useAddPayment,
   useStudent,
+  type PaymentMethod,
   type Student,
 } from '@/hooks/use-students';
 import { useTheme } from '@/hooks/use-theme';
+import { showMessage } from '@/utils/dialogs';
 
 const PAYMENT_DESCRIPTIONS = {
   credit: 'שולם מראש עבור שיעורים עתידיים',
@@ -97,6 +101,22 @@ export default function StudentDetailsScreen() {
 
         <Section title="מצב תשלומים">
           <PaymentCard student={student} />
+          <PaymentComposer studentId={student.id} />
+          {student.payments.length === 0 ? (
+            <ThemedText type="small" themeColor="textSecondary">
+              עדיין לא נרשמו תשלומים.
+            </ThemedText>
+          ) : (
+            student.payments.map((payment) => (
+              <ThemedView key={payment.id} type="backgroundElement" style={styles.paymentRow}>
+                <ThemedText type="smallBold">{formatShekels(payment.amount)}</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary" style={styles.paymentRowDetail}>
+                  {PAYMENT_METHOD_LABELS[payment.method]} · {formatDate(payment.paidAt)}
+                  {payment.note ? ` · ${payment.note}` : ''}
+                </ThemedText>
+              </ThemedView>
+            ))
+          )}
         </Section>
       </ScrollView>
     </ThemedView>
@@ -121,10 +141,14 @@ function NoteComposer({ studentId }: { studentId: string }) {
       />
       <Pressable
         disabled={!trimmed}
-        onPress={() => {
-          addLessonNote(studentId, trimmed);
+        onPress={async () => {
           setText('');
           Keyboard.dismiss();
+          const error = await addLessonNote(studentId, trimmed);
+          if (error) {
+            setText(trimmed);
+            showMessage('שגיאה', error);
+          }
         }}
         style={({ pressed }) => [
           styles.addButton,
@@ -133,6 +157,72 @@ function NoteComposer({ studentId }: { studentId: string }) {
         ]}>
         <ThemedText type="smallBold" style={styles.addButtonText}>
           הוספת הערה
+        </ThemedText>
+      </Pressable>
+    </ThemedView>
+  );
+}
+
+const METHODS = Object.keys(PAYMENT_METHOD_LABELS) as PaymentMethod[];
+
+function PaymentComposer({ studentId }: { studentId: string }) {
+  const theme = useTheme();
+  const addPayment = useAddPayment();
+  const [amount, setAmount] = useState('');
+  const [method, setMethod] = useState<PaymentMethod>('cash');
+  const [busy, setBusy] = useState(false);
+  const value = Number(amount);
+  const valid = Number.isInteger(value) && value > 0;
+
+  const submit = async () => {
+    if (!valid || busy) return;
+    setBusy(true);
+    Keyboard.dismiss();
+    const error = await addPayment(studentId, { amount: value, method });
+    setBusy(false);
+    if (error) {
+      showMessage('שגיאה', error);
+      return;
+    }
+    setAmount('');
+  };
+
+  return (
+    <ThemedView type="backgroundElement" style={styles.composer}>
+      <ThemedText type="smallBold">רישום תשלום</ThemedText>
+      <TextInput
+        value={amount}
+        onChangeText={(text) => setAmount(text.replace(/\D/g, ''))}
+        placeholder="סכום בשקלים"
+        placeholderTextColor={theme.textSecondary}
+        keyboardType="number-pad"
+        style={[styles.amountInput, { color: theme.text, backgroundColor: theme.background }]}
+      />
+      <View style={styles.methods}>
+        {METHODS.map((m) => (
+          <Pressable
+            key={m}
+            onPress={() => setMethod(m)}
+            accessibilityRole="radio"
+            accessibilityState={{ selected: m === method }}>
+            <ThemedView
+              type={m === method ? 'background' : 'backgroundSelected'}
+              style={[styles.method, m === method && { borderColor: theme.accent }]}>
+              <ThemedText type={m === method ? 'smallBold' : 'small'}>{PAYMENT_METHOD_LABELS[m]}</ThemedText>
+            </ThemedView>
+          </Pressable>
+        ))}
+      </View>
+      <Pressable
+        disabled={!valid || busy}
+        onPress={submit}
+        style={({ pressed }) => [
+          styles.addButton,
+          { backgroundColor: valid && !busy ? theme.accent : theme.backgroundSelected },
+          pressed && styles.pressed,
+        ]}>
+        <ThemedText type="smallBold" style={styles.addButtonText}>
+          {busy ? 'שומר…' : valid ? `רישום תשלום של ${formatShekels(value)}` : 'רישום תשלום'}
         </ThemedText>
       </Pressable>
     </ThemedView>
@@ -251,6 +341,34 @@ const styles = StyleSheet.create({
     borderRadius: Spacing.two,
     fontSize: 14,
     textAlignVertical: 'top',
+  },
+  amountInput: {
+    padding: Spacing.two,
+    borderRadius: Spacing.two,
+    fontSize: 16,
+  },
+  methods: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.two,
+  },
+  method: {
+    paddingVertical: Spacing.one,
+    paddingHorizontal: Spacing.three,
+    borderRadius: Spacing.four,
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  paymentRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: Spacing.two,
+    paddingVertical: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    borderRadius: Spacing.three,
+  },
+  paymentRowDetail: {
+    flex: 1,
   },
   addButton: {
     alignItems: 'center',

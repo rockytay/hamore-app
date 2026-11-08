@@ -12,7 +12,9 @@ import {
   DAY_END_MIN,
   DAY_START_MIN,
   getDateKey,
+  getLessonTypePrice,
   TIME_STEP_MIN,
+  useLessonTypes,
   type CalendarEvent,
 } from '@/hooks/use-calendar-events';
 import { useCurrentUser } from '@/hooks/use-current-user';
@@ -31,12 +33,12 @@ type EventEditorProps = {
   initialStartMin: number;
   initialEndMin: number;
   onClose: () => void;
-  /** Returns an error message in Hebrew, or null when the block was saved. */
-  onSave: (event: CalendarEvent) => string | null;
-  onDelete: (id: string) => void;
-  onApprove: (id: string) => void;
+  /** Each action resolves to an error message in Hebrew, or null when it was saved. */
+  onSave: (event: CalendarEvent) => Promise<string | null>;
+  onDelete: (id: string) => Promise<string | null>;
+  onApprove: (id: string) => Promise<string | null>;
   /** Development only: act as if the student approved a lesson the teacher scheduled. */
-  onStudentApprove: (id: string) => void;
+  onStudentApprove: (id: string) => Promise<string | null>;
   /** Only for availability blocks: start a new lesson inside this block. */
   onScheduleInside?: () => void;
 };
@@ -57,26 +59,44 @@ export function EventEditor({
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const students = useStudents();
-  const debtWarnings = useCurrentUser()?.settings.debtWarnings ?? true;
+  const lessonTypes = useLessonTypes();
+  const teacher = useCurrentUser();
+  const debtWarnings = teacher?.settings.debtWarnings ?? true;
   const [type, setType] = useState<EditorType>(initialType);
   const [startMin, setStartMin] = useState(initialStartMin);
   const [endMin, setEndMin] = useState(initialEndMin);
   const [studentId, setStudentId] = useState<string | null>(null);
+  const [lessonTypeId, setLessonTypeId] = useState<string | null>(lessonTypes[0]?.id ?? null);
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const [showDebtWarning, setShowDebtWarning] = useState(false);
 
   const student = students.find((s) => s.id === studentId);
+  const lessonType = lessonTypes.find((t) => t.id === lessonTypeId);
   const isNew = !event;
   const awaitingTeacher = event?.status === 'pending' && event.awaiting === 'teacher';
   const timesChanged = !!event && (startMin !== event.startMin || endMin !== event.endMin);
 
-  const save = (next: CalendarEvent) => {
-    const result = onSave(next);
+  /** Runs a save, approve or delete; keeps the sheet open with the error if it fails. */
+  const run = async (action: () => Promise<string | null>) => {
+    if (busy) return;
+    setBusy(true);
+    const result = await action();
+    setBusy(false);
     if (result) {
       setError(result);
     } else {
       onClose();
     }
+  };
+
+  const save = (next: CalendarEvent) => run(() => onSave(next));
+
+  const chooseLessonType = (id: string) => {
+    const chosen = lessonTypes.find((t) => t.id === id);
+    setLessonTypeId(id);
+    setError(null);
+    if (chosen) setEndMin(Math.min(startMin + chosen.durationMin, DAY_END_MIN));
   };
 
   const handleSave = ({ ignoreDebt = false } = {}) => {
@@ -86,24 +106,21 @@ export function EventEditor({
         save({ ...times, id: createEventId(), status: 'available' });
       } else if (student && student.balance < 0 && debtWarnings && !ignoreDebt) {
         setShowDebtWarning(true);
-      } else if (student) {
+      } else if (student && lessonType) {
         save({
           ...times,
           id: createEventId(),
           status: 'pending',
-          studentName: student.name,
           awaiting: 'student',
+          studentId: student.id,
+          studentName: student.name,
+          lessonTypeId: lessonType.id,
+          lessonTypeName: lessonType.name,
         });
       }
     } else if (event.status === 'booked' && timesChanged) {
       // Moving a confirmed lesson needs the student's approval again.
-      save({
-        ...times,
-        id: event.id,
-        status: 'pending',
-        studentName: event.studentName,
-        awaiting: 'student',
-      });
+      save({ ...event, ...times, status: 'pending', awaiting: 'student' });
     } else {
       save({ ...event, startMin, endMin });
     }
@@ -115,15 +132,21 @@ export function EventEditor({
     title = 'הוספה ליומן';
   } else if (event.status === 'available') {
     title = 'זמן פנוי לשיעורים';
-  } else if (event.status === 'booked') {
-    title = 'שיעור מאושר';
-    description = `שיעור עם ${event.studentName}`;
-  } else if (event.awaiting === 'teacher') {
-    title = 'בקשה לשיעור';
-    description = `${event.studentName} ביקש/ה לקבוע שיעור בזמן הזה`;
   } else {
-    title = 'ממתין לאישור התלמיד';
-    description = `השיעור עם ${event.studentName} ממתין לאישור`;
+    const what = [event.lessonTypeName, event.price !== undefined ? formatShekels(event.price) : null]
+      .filter(Boolean)
+      .join(' · ');
+    if (event.status === 'booked') {
+      title = 'שיעור מאושר';
+      description = `שיעור עם ${event.studentName}`;
+    } else if (event.awaiting === 'teacher') {
+      title = 'בקשה לשיעור';
+      description = `${event.studentName} ביקש/ה לקבוע שיעור בזמן הזה`;
+    } else {
+      title = 'ממתין לאישור התלמיד';
+      description = `השיעור עם ${event.studentName} ממתין לאישור`;
+    }
+    if (what) description += `\n${what}`;
   }
 
   let actions: ReactNode;
@@ -159,31 +182,31 @@ export function EventEditor({
         <ActionButton
           label="אישור"
           color="slotAvailable"
-          onPress={() => {
-            onApprove(event.id);
-            onClose();
-          }}
+          disabled={busy}
+          onPress={() => run(() => onApprove(event.id))}
         />
         <ActionButton
           label="דחייה"
           color="danger"
-          onPress={() => {
-            onDelete(event.id);
-            onClose();
-          }}
+          disabled={busy}
+          onPress={() => run(() => onDelete(event.id))}
         />
       </>
     );
   } else if (isNew) {
-    const canSave = type === 'available' || !!student;
+    const canSave = !busy && (type === 'available' || (!!student && !!lessonType));
     actions = (
       <ActionButton
         label={
-          type === 'available'
-            ? 'שמירת זמן פנוי'
-            : student
-              ? `שליחה לאישור של ${student.name}`
-              : 'בחרו תלמיד'
+          busy
+            ? 'שומר…'
+            : type === 'available'
+              ? 'שמירת זמן פנוי'
+              : !lessonType
+                ? 'בחרו סוג שיעור'
+                : student
+                  ? `שליחה לאישור של ${student.name}`
+                  : 'בחרו תלמיד'
         }
         color={!canSave ? 'backgroundSelected' : type === 'available' ? 'slotAvailable' : 'slotPending'}
         disabled={!canSave}
@@ -200,17 +223,16 @@ export function EventEditor({
     actions = (
       <>
         <ActionButton
-          label={event.status === 'booked' && timesChanged ? 'שליחה לאישור מחדש' : 'שמירה'}
+          label={busy ? 'שומר…' : event.status === 'booked' && timesChanged ? 'שליחה לאישור מחדש' : 'שמירה'}
           color="accent"
+          disabled={busy}
           onPress={() => handleSave()}
         />
         <ActionButton
           label={deleteLabel}
           color="danger"
-          onPress={() => {
-            onDelete(event.id);
-            onClose();
-          }}
+          disabled={busy}
+          onPress={() => run(() => onDelete(event.id))}
         />
       </>
     );
@@ -297,6 +319,23 @@ export function EventEditor({
               <ThemedText type="small">אין עדיין תלמידים. הוסיפו תלמיד דרך כפתור ה־+.</ThemedText>
             ) : (
               <>
+                <ThemedText type="small">סוג השיעור:</ThemedText>
+                {lessonTypes.length === 0 ? (
+                  <ThemedText type="small" themeColor="danger">
+                    לא נמצאו סוגי שיעור. יש לנסות לפתוח את היומן מחדש.
+                  </ThemedText>
+                ) : (
+                  <View style={styles.studentChips}>
+                    {lessonTypes.map((t) => (
+                      <StudentChip
+                        key={t.id}
+                        name={`${t.name} · ${t.durationMin} דק׳ · ${formatShekels(getLessonTypePrice(t, teacher))}`}
+                        selected={t.id === lessonTypeId}
+                        onPress={() => chooseLessonType(t.id)}
+                      />
+                    ))}
+                  </View>
+                )}
                 <ThemedText type="small">בחרו תלמיד:</ThemedText>
                 <ScrollView style={styles.studentList} contentContainerStyle={styles.studentChips}>
                   {students.map((s) => (
@@ -335,10 +374,7 @@ export function EventEditor({
 
         {__DEV__ && event?.status === 'pending' && event.awaiting === 'student' && (
           <Pressable
-            onPress={() => {
-              onStudentApprove(event.id);
-              onClose();
-            }}
+            onPress={() => run(() => onStudentApprove(event.id))}
             style={styles.scheduleInside}>
             <ThemedText type="small" themeColor="textSecondary">
               בדיקה: הדמיית אישור של {event.studentName}

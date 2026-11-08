@@ -83,20 +83,24 @@ function Profile({ user }: { user: CurrentUser }) {
     setDraft(toDraft(user));
   };
 
-  const save = () => {
+  const save = async () => {
     if (!draft) return;
     const message = validateDraft(draft);
     if (message) {
       setError(message);
       return;
     }
-    updateUser({
+    const saveError = await updateUser({
       ...draft,
       firstName: draft.firstName.trim(),
       lastName: draft.lastName.trim(),
       email: draft.email.trim(),
       lessonPrice: Number(draft.lessonPrice),
     });
+    if (saveError) {
+      setError(saveError);
+      return;
+    }
     setDraft(null);
     setError(null);
   };
@@ -113,8 +117,10 @@ function Profile({ user }: { user: CurrentUser }) {
         : [...shown.teachingCategories, category],
     });
 
-  const setSetting = (key: keyof TeacherSettings, value: boolean) =>
-    updateUser({ settings: { ...user.settings, [key]: value } });
+  const setSetting = async (key: keyof TeacherSettings, value: boolean) => {
+    const saveError = await updateUser({ settings: { ...user.settings, [key]: value } });
+    if (saveError) showMessage('שגיאה', saveError);
+  };
 
   return (
     <ScrollView
