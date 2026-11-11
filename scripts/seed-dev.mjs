@@ -73,6 +73,17 @@ const STUDENTS = [
   ]],
 ];
 
+// Students must have their own account before a teacher can add them. Dana keeps the
+// sign-in from the README; the others get student2@example.com, student3@example.com, ...
+const studentEmail = (index) => (index === 0 ? ACCOUNTS[1].email : `student${index + 1}@example.com`);
+STUDENTS.forEach(([first, last, phone], index) => {
+  if (index === 0) return;
+  ACCOUNTS.push({
+    email: studentEmail(index),
+    metadata: { role: 'student', first_name: first, last_name: last, phone },
+  });
+});
+
 const admin = createClient(url, secretKey, { auth: { persistSession: false } });
 
 for (const account of ACCOUNTS) {
@@ -99,14 +110,16 @@ if (existing.error) throw existing.error;
 const known = new Set(existing.data.map((s) => s.phone));
 
 let added = 0;
-for (const [first, last, phone, category, transmission, lessons, balance, notes] of STUDENTS) {
+for (const [index, [, , phone, category, transmission, lessons, balance, notes]] of STUDENTS.entries()) {
   if (known.has(phone)) continue;
+  // Find the account by email, like the app does. The database copies the name and phone.
+  const found = await teacher.rpc('find_student_account', { student_email: studentEmail(index) });
+  if (found.error) throw found.error;
+  if (!found.data?.[0]) throw new Error(`No student account for ${studentEmail(index)}`);
   const { data, error } = await teacher
     .from('students')
     .insert({
-      first_name: first,
-      last_name: last,
-      phone,
+      profile_id: found.data[0].profile_id,
       license_category: category,
       transmission,
       theory_passed: lessons > 0,

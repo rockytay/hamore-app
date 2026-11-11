@@ -1,4 +1,5 @@
 import { router } from 'expo-router';
+import { SymbolView } from 'expo-symbols';
 import { useState, type ReactNode } from 'react';
 import {
   Keyboard,
@@ -17,16 +18,15 @@ import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 import { getPlan, useCurrentUser } from '@/hooks/use-current-user';
 import {
-  formatPhone,
+  findStudentAccount,
   isValidIsraeliId,
-  isValidPhone,
   LICENSE_CATEGORIES,
-  normalizePhone,
   StudentSaveError,
   TRANSMISSION_LABELS,
   useAddStudent,
   useStudents,
   type LicenseCategory,
+  type StudentAccount,
   type Transmission,
 } from '@/hooks/use-students';
 import { useTheme } from '@/hooks/use-theme';
@@ -41,9 +41,8 @@ const BALANCE_LABELS: Record<BalanceType, string> = {
 };
 
 type Form = {
-  firstName: string;
-  lastName: string;
-  phone: string;
+  /** The email the student signed up with; their account is found by it. */
+  email: string;
   idNumber: string;
   licenseCategory: LicenseCategory;
   transmission: Transmission;
@@ -68,9 +67,7 @@ export default function AddStudentScreen() {
   // Offer the categories the teacher teaches first, and default to their car's transmission.
   const teacherCategories = user?.teachingCategories.length ? user.teachingCategories : ['B' as const];
   const emptyForm = (): Form => ({
-    firstName: '',
-    lastName: '',
-    phone: '',
+    email: '',
     idNumber: '',
     licenseCategory: teacherCategories[0],
     transmission: user?.transmission ?? 'automatic',
@@ -84,6 +81,11 @@ export default function AddStudentScreen() {
   const [form, setForm] = useState<Form>(emptyForm);
   const [errors, setErrors] = useState<FormErrors>({});
   const [showAllCategories, setShowAllCategories] = useState(false);
+  /** The student's account, once found by email. The rest of the form needs it. */
+  const [account, setAccount] = useState<StudentAccount | null>(null);
+  const [searching, setSearching] = useState(false);
+  /** Set when the email belongs to a student on the former list. */
+  const [formerStudentId, setFormerStudentId] = useState<string | null>(null);
 
   const plan = user ? getPlan(user.subscription.planId) : null;
   const planFull = plan !== null && students.length >= plan.maxStudents;
@@ -92,17 +94,60 @@ export default function AddStudentScreen() {
   const change = <K extends keyof Form>(key: K, value: Form[K]) => {
     setForm((current) => ({ ...current, [key]: value }));
     setErrors((current) => ({ ...current, [key]: undefined }));
+    // A different email means a different student: search again.
+    if (key === 'email') {
+      setAccount(null);
+      setFormerStudentId(null);
+    }
+  };
+
+  /** Finds the student's account. Only students who signed up to the app can be added. */
+  const search = async () => {
+    const email = form.email.trim();
+    if (!/^\S+@\S+\.\S+$/.test(email)) {
+      setErrors((current) => ({
+        ...current,
+        email: 'יש להזין כתובת אימייל תקינה',
+      }));
+      return;
+    }
+    setSearching(true);
+    try {
+      const found = await findStudentAccount(email);
+      if (!found) {
+        setErrors((current) => ({
+          ...current,
+          email:
+            'לא נמצא תלמיד רשום עם האימייל הזה. בקשו מהתלמיד להירשם לאפליקציה כתלמיד ואז נסו שוב.',
+        }));
+      } else if (found.alreadyAdded) {
+        setErrors((current) => ({
+          ...current,
+          email: 'התלמיד כבר נמצא ברשימת התלמידים שלך',
+        }));
+      } else if (found.removedStudentId) {
+        // Their history is kept on the former list: bring them back rather than add again.
+        setFormerStudentId(found.removedStudentId);
+        setErrors((current) => ({
+          ...current,
+          email: `${found.firstName} ${found.lastName} נמצא/ת ברשימת התלמידים לשעבר שלך. אפשר להחזיר אותו/ה מעמוד התלמיד.`,
+        }));
+      } else {
+        Keyboard.dismiss();
+        setAccount(found);
+      }
+    } catch (error) {
+      const message =
+        error instanceof StudentSaveError ? error.message : 'החיפוש נכשל. יש לנסות שוב.';
+      setErrors((current) => ({ ...current, email: message }));
+    } finally {
+      setSearching(false);
+    }
   };
 
   const validate = (): FormErrors => {
     const result: FormErrors = {};
-    if (!form.firstName.trim()) result.firstName = 'יש להזין שם פרטי';
-    if (!form.lastName.trim()) result.lastName = 'יש להזין שם משפחה';
-    if (!isValidPhone(form.phone)) {
-      result.phone = 'יש להזין מספר נייד תקין (10 ספרות, מתחיל ב־05)';
-    } else if (students.some((s) => normalizePhone(s.phone) === normalizePhone(form.phone))) {
-      result.phone = 'כבר קיים תלמיד עם מספר הטלפון הזה';
-    }
+    if (!account) result.email = 'יש לחפש ולמצוא את התלמיד לפי אימייל';
     if (form.idNumber.trim() && !isValidIsraeliId(form.idNumber)) {
       result.idNumber = 'מספר תעודת הזהות אינו תקין';
     }
@@ -117,7 +162,7 @@ export default function AddStudentScreen() {
   const submit = async () => {
     if (planFull || saving) return;
     const found = validate();
-    if (Object.keys(found).length > 0) {
+    if (Object.keys(found).length > 0 || !account) {
       setErrors(found);
       return;
     }
@@ -127,16 +172,14 @@ export default function AddStudentScreen() {
     let student;
     try {
       student = await addStudent({
-      firstName: form.firstName.trim(),
-      lastName: form.lastName.trim(),
-      phone: formatPhone(form.phone),
-      idNumber: form.idNumber.replace(/\D/g, '') || undefined,
-      licenseCategory: form.licenseCategory,
-      transmission: form.transmission,
-      theoryPassed: form.theoryPassed,
-      lessonsCompleted: form.lessonsCompleted,
-      balance: form.balanceType === 'credit' ? amount : form.balanceType === 'debt' ? -amount : 0,
-      firstNote: form.firstNote.trim() || undefined,
+        profileId: account.profileId,
+        idNumber: form.idNumber.replace(/\D/g, '') || undefined,
+        licenseCategory: form.licenseCategory,
+        transmission: form.transmission,
+        theoryPassed: form.theoryPassed,
+        lessonsCompleted: form.lessonsCompleted,
+        balance: form.balanceType === 'credit' ? amount : form.balanceType === 'debt' ? -amount : 0,
+        firstNote: form.firstNote.trim() || undefined,
       });
     } catch (error) {
       const message = error instanceof StudentSaveError ? error.message : 'שמירת התלמיד נכשלה. יש לנסות שוב.';
@@ -153,6 +196,7 @@ export default function AddStudentScreen() {
     Keyboard.dismiss();
     setForm(emptyForm());
     setErrors({});
+    setAccount(null);
     setShowAllCategories(false);
     router.push({ pathname: '/students/[id]', params: { id: student.id } }, { withAnchor: true });
   };
@@ -195,164 +239,192 @@ export default function AddStudentScreen() {
             </View>
           )}
 
-          <FormSection title="פרטי התלמיד">
-            <View style={styles.inline}>
-              <Input
-                label="שם פרטי"
-                value={form.firstName}
-                onChange={(value) => change('firstName', value)}
-                error={errors.firstName}
-                style={styles.flex}
-              />
-              <Input
-                label="שם משפחה"
-                value={form.lastName}
-                onChange={(value) => change('lastName', value)}
-                error={errors.lastName}
-                style={styles.flex}
-              />
-            </View>
-            <Input
-              label="טלפון נייד"
-              value={form.phone}
-              onChange={(value) => change('phone', value)}
-              placeholder="050-1234567"
-              keyboardType="phone-pad"
-              error={errors.phone}
-            />
-            <Input
-              label="תעודת זהות (לא חובה)"
-              value={form.idNumber}
-              onChange={(value) => change('idNumber', value.replace(/\D/g, '').slice(0, 9))}
-              placeholder="9 ספרות"
-              keyboardType="number-pad"
-              error={errors.idNumber}
-            />
-          </FormSection>
-
-          <FormSection title="רישיון">
-            <Label>דרגת רישיון</Label>
-            <View style={styles.chips}>
-              {categories.map((category) => (
-                <Chip
-                  key={category}
-                  label={category}
-                  selected={form.licenseCategory === category}
-                  onPress={() => change('licenseCategory', category)}
-                />
-              ))}
-              {teacherCategories.length < ALL_CATEGORIES.length && (
-                <Chip
-                  label={showAllCategories ? 'פחות' : 'עוד דרגות'}
-                  selected={false}
-                  onPress={() => setShowAllCategories((current) => !current)}
-                />
-              )}
-            </View>
+          <FormSection title="חיפוש תלמיד">
             <ThemedText type="small" themeColor="textSecondary" style={styles.hint}>
-              {LICENSE_CATEGORIES[form.licenseCategory]}
+              ניתן להוסיף רק תלמיד שכבר נרשם לאפליקציה כתלמיד. הזינו את האימייל שאיתו נרשם.
             </ThemedText>
-
-            <Label>תיבת הילוכים</Label>
-            <View style={styles.chips}>
-              {(Object.keys(TRANSMISSION_LABELS) as Transmission[]).map((transmission) => (
-                <Chip
-                  key={transmission}
-                  label={TRANSMISSION_LABELS[transmission]}
-                  selected={form.transmission === transmission}
-                  onPress={() => change('transmission', transmission)}
-                />
-              ))}
-            </View>
-
-            <Label>מבחן תאוריה</Label>
-            <View style={styles.chips}>
-              <Chip
-                label="עבר/ה"
-                selected={form.theoryPassed}
-                onPress={() => change('theoryPassed', true)}
-              />
-              <Chip
-                label="טרם עבר/ה"
-                selected={!form.theoryPassed}
-                onPress={() => change('theoryPassed', false)}
-              />
-            </View>
-          </FormSection>
-
-          <FormSection title="התחלה">
-            <Label>שיעורים קודמים (למשל ממורה אחר)</Label>
-            <View style={styles.stepper}>
-              <StepButton
-                label="−"
-                disabled={form.lessonsCompleted === 0}
-                onPress={() => change('lessonsCompleted', Math.max(0, form.lessonsCompleted - 1))}
-              />
-              <ThemedText type="smallBold" style={styles.stepValue}>
-                {form.lessonsCompleted}
-              </ThemedText>
-              <StepButton
-                label="+"
-                onPress={() => change('lessonsCompleted', form.lessonsCompleted + 1)}
-              />
-            </View>
-
-            <Label>מצב תשלום</Label>
-            <View style={styles.chips}>
-              {(Object.keys(BALANCE_LABELS) as BalanceType[]).map((type) => (
-                <Chip
-                  key={type}
-                  label={BALANCE_LABELS[type]}
-                  selected={form.balanceType === type}
-                  onPress={() => change('balanceType', type)}
-                />
-              ))}
-            </View>
-            {form.balanceType !== 'even' && (
-              <Input
-                label={form.balanceType === 'credit' ? 'סכום ששולם מראש (₪)' : 'סכום החוב (₪)'}
-                value={form.balanceAmount}
-                onChange={(value) => change('balanceAmount', value.replace(/\D/g, ''))}
-                placeholder={user ? String(user.lessonPrice) : undefined}
-                keyboardType="number-pad"
-                error={errors.balanceAmount}
-              />
-            )}
-            {form.balanceType !== 'even' && user && Number(form.balanceAmount) > 0 && (
-              <ThemedText type="small" themeColor="textSecondary" style={styles.hint}>
-                {formatShekels(Number(form.balanceAmount))} ≈{' '}
-                {(Number(form.balanceAmount) / user.lessonPrice).toFixed(1)} שיעורים לפי{' '}
-                {formatShekels(user.lessonPrice)} לשיעור
-              </ThemedText>
-            )}
-
             <Input
-              label="הערות (לא חובה)"
-              value={form.firstNote}
-              onChange={(value) => change('firstNote', value)}
-              placeholder="ניסיון קודם, זמינות, דברים שחשוב לזכור..."
-              multiline
+              label="אימייל התלמיד"
+              value={form.email}
+              onChange={(value) => change('email', value)}
+              placeholder="student@example.com"
+              keyboardType="email-address"
+              onSubmit={search}
+              error={errors.email}
             />
+            {!account && (
+              <Pressable
+                disabled={searching || planFull}
+                onPress={search}
+                style={({ pressed }) => [
+                  styles.searchButton,
+                  {
+                    backgroundColor:
+                      searching || planFull ? theme.backgroundSelected : theme.accent,
+                  },
+                  pressed && styles.pressed,
+                ]}>
+                <ThemedText type="smallBold" style={styles.whiteText}>
+                  {searching ? 'מחפש…' : 'חיפוש'}
+                </ThemedText>
+              </Pressable>
+            )}
+            {account && <FoundAccount account={account} />}
+            {formerStudentId && (
+              <Pressable
+                onPress={() =>
+                  router.push({ pathname: '/students/[id]', params: { id: formerStudentId } }, { withAnchor: true })
+                }
+                style={({ pressed }) => [styles.searchButton, { backgroundColor: theme.accent }, pressed && styles.pressed]}>
+                <ThemedText type="smallBold" style={styles.whiteText}>
+                  לעמוד התלמיד
+                </ThemedText>
+              </Pressable>
+            )}
           </FormSection>
 
-          {errorCount > 0 && (
-            <ThemedText type="small" themeColor="danger" style={styles.centered}>
-              יש לתקן את השדות המסומנים
-            </ThemedText>
-          )}
+          {account && (
+            <>
+              <FormSection title="פרטים נוספים">
+                <Input
+                  label="תעודת זהות (לא חובה)"
+                  value={form.idNumber}
+                  onChange={(value) => change('idNumber', value.replace(/\D/g, '').slice(0, 9))}
+                  placeholder="9 ספרות"
+                  keyboardType="number-pad"
+                  error={errors.idNumber}
+                />
+              </FormSection>
 
-          <Pressable
-            disabled={planFull || saving}
-            onPress={submit}
-            style={({ pressed }) => [
-              styles.submit,
-              { backgroundColor: planFull || saving ? theme.backgroundSelected : theme.accent },
-              pressed && styles.pressed,
-            ]}>
-            <ThemedText type="smallBold" style={styles.whiteText}>
-              {saving ? 'שומר…' : 'הוספת תלמיד'}
-            </ThemedText>
-          </Pressable>
+              <FormSection title="רישיון">
+                <Label>דרגת רישיון</Label>
+                <View style={styles.chips}>
+                  {categories.map((category) => (
+                    <Chip
+                      key={category}
+                      label={category}
+                      selected={form.licenseCategory === category}
+                      onPress={() => change('licenseCategory', category)}
+                    />
+                  ))}
+                  {teacherCategories.length < ALL_CATEGORIES.length && (
+                    <Chip
+                      label={showAllCategories ? 'פחות' : 'עוד דרגות'}
+                      selected={false}
+                      onPress={() => setShowAllCategories((current) => !current)}
+                    />
+                  )}
+                </View>
+                <ThemedText type="small" themeColor="textSecondary" style={styles.hint}>
+                  {LICENSE_CATEGORIES[form.licenseCategory]}
+                </ThemedText>
+
+                <Label>תיבת הילוכים</Label>
+                <View style={styles.chips}>
+                  {(Object.keys(TRANSMISSION_LABELS) as Transmission[]).map((transmission) => (
+                    <Chip
+                      key={transmission}
+                      label={TRANSMISSION_LABELS[transmission]}
+                      selected={form.transmission === transmission}
+                      onPress={() => change('transmission', transmission)}
+                    />
+                  ))}
+                </View>
+
+                <Label>מבחן תאוריה</Label>
+                <View style={styles.chips}>
+                  <Chip
+                    label="עבר/ה"
+                    selected={form.theoryPassed}
+                    onPress={() => change('theoryPassed', true)}
+                  />
+                  <Chip
+                    label="טרם עבר/ה"
+                    selected={!form.theoryPassed}
+                    onPress={() => change('theoryPassed', false)}
+                  />
+                </View>
+              </FormSection>
+
+              <FormSection title="התחלה">
+                <Label>שיעורים קודמים (למשל ממורה אחר)</Label>
+                <View style={styles.stepper}>
+                  <StepButton
+                    label="−"
+                    disabled={form.lessonsCompleted === 0}
+                    onPress={() =>
+                      change('lessonsCompleted', Math.max(0, form.lessonsCompleted - 1))
+                    }
+                  />
+                  <ThemedText type="smallBold" style={styles.stepValue}>
+                    {form.lessonsCompleted}
+                  </ThemedText>
+                  <StepButton
+                    label="+"
+                    onPress={() => change('lessonsCompleted', form.lessonsCompleted + 1)}
+                  />
+                </View>
+
+                <Label>מצב תשלום</Label>
+                <View style={styles.chips}>
+                  {(Object.keys(BALANCE_LABELS) as BalanceType[]).map((type) => (
+                    <Chip
+                      key={type}
+                      label={BALANCE_LABELS[type]}
+                      selected={form.balanceType === type}
+                      onPress={() => change('balanceType', type)}
+                    />
+                  ))}
+                </View>
+                {form.balanceType !== 'even' && (
+                  <Input
+                    label={form.balanceType === 'credit' ? 'סכום ששולם מראש (₪)' : 'סכום החוב (₪)'}
+                    value={form.balanceAmount}
+                    onChange={(value) => change('balanceAmount', value.replace(/\D/g, ''))}
+                    placeholder={user ? String(user.lessonPrice) : undefined}
+                    keyboardType="number-pad"
+                    error={errors.balanceAmount}
+                  />
+                )}
+                {form.balanceType !== 'even' && user && Number(form.balanceAmount) > 0 && (
+                  <ThemedText type="small" themeColor="textSecondary" style={styles.hint}>
+                    {formatShekels(Number(form.balanceAmount))} ≈{' '}
+                    {(Number(form.balanceAmount) / user.lessonPrice).toFixed(1)} שיעורים לפי{' '}
+                    {formatShekels(user.lessonPrice)} לשיעור
+                  </ThemedText>
+                )}
+
+                <Input
+                  label="הערות (לא חובה)"
+                  value={form.firstNote}
+                  onChange={(value) => change('firstNote', value)}
+                  placeholder="ניסיון קודם, זמינות, דברים שחשוב לזכור..."
+                  multiline
+                />
+              </FormSection>
+
+              {errorCount > 0 && (
+                <ThemedText type="small" themeColor="danger" style={styles.centered}>
+                  יש לתקן את השדות המסומנים
+                </ThemedText>
+              )}
+
+              <Pressable
+                disabled={planFull || saving}
+                onPress={submit}
+                style={({ pressed }) => [
+                  styles.submit,
+                  {
+                    backgroundColor: planFull || saving ? theme.backgroundSelected : theme.accent,
+                  },
+                  pressed && styles.pressed,
+                ]}>
+                <ThemedText type="smallBold" style={styles.whiteText}>
+                  {saving ? 'שומר…' : 'הוספת תלמיד'}
+                </ThemedText>
+              </Pressable>
+            </>
+          )}
         </ScrollView>
       </SafeAreaView>
     </ThemedView>
@@ -372,6 +444,36 @@ function FormSection({ title, children }: { title: string; children: ReactNode }
   );
 }
 
+/** The student found by email. Name and phone come from their own account. */
+function FoundAccount({ account }: { account: StudentAccount }) {
+  const theme = useTheme();
+  return (
+    <View
+      style={[
+        styles.found,
+        { backgroundColor: theme.background, borderColor: theme.slotAvailable },
+      ]}>
+      <SymbolView
+        name={{
+          ios: 'checkmark.seal.fill',
+          android: 'verified',
+          web: 'verified',
+        }}
+        size={22}
+        tintColor={theme.slotAvailable}
+      />
+      <View style={styles.flex}>
+        <ThemedText type="smallBold">
+          {account.firstName} {account.lastName}
+        </ThemedText>
+        <ThemedText type="small" themeColor="textSecondary">
+          {account.phone || 'ללא טלפון'} · רשום/ה במערכת
+        </ThemedText>
+      </View>
+    </View>
+  );
+}
+
 function Label({ children }: { children: ReactNode }) {
   return <ThemedText type="small">{children}</ThemedText>;
 }
@@ -385,6 +487,7 @@ function Input({
   multiline,
   error,
   style,
+  onSubmit,
 }: {
   label: string;
   value: string;
@@ -394,8 +497,10 @@ function Input({
   multiline?: boolean;
   error?: string;
   style?: object;
+  onSubmit?: () => void;
 }) {
   const theme = useTheme();
+  const isEmail = keyboardType === 'email-address';
   return (
     <View style={[styles.field, style]}>
       <Label>{label}</Label>
@@ -407,6 +512,10 @@ function Input({
         keyboardType={keyboardType}
         multiline={multiline}
         autoCorrect={false}
+        autoCapitalize={isEmail ? 'none' : undefined}
+        autoComplete={isEmail ? 'off' : undefined}
+        returnKeyType={onSubmit ? 'search' : undefined}
+        onSubmitEditing={onSubmit}
         style={[
           styles.input,
           multiline && styles.multiline,
@@ -582,6 +691,19 @@ const styles = StyleSheet.create({
     minWidth: 24,
     textAlign: 'center',
     fontSize: 18,
+  },
+  searchButton: {
+    alignItems: 'center',
+    paddingVertical: Spacing.two,
+    borderRadius: Spacing.three,
+  },
+  found: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    padding: Spacing.three,
+    borderWidth: 1.5,
+    borderRadius: Spacing.three,
   },
   submit: {
     alignItems: 'center',

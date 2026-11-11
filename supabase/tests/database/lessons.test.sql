@@ -10,7 +10,12 @@ insert into auth.users (id, email, raw_user_meta_data) values
   ('00000000-0000-0000-0000-00000000000a', 'a@test.local',
    '{"role":"teacher","first_name":"אבי","last_name":"מורה"}'),
   ('00000000-0000-0000-0000-00000000000b', 'b@test.local',
-   '{"role":"teacher","first_name":"בני","last_name":"מורה"}');
+   '{"role":"teacher","first_name":"בני","last_name":"מורה"}'),
+  -- Students sign up themselves before a teacher can add them.
+  ('00000000-0000-0000-0000-0000000000c1', 'yossi@test.local',
+   '{"role":"student","first_name":"יוסי","last_name":"לוי","phone":"0523333333"}'),
+  ('00000000-0000-0000-0000-0000000000c2', 'ron@test.local',
+   '{"role":"student","first_name":"רון","last_name":"דהן","phone":"0548901234"}');
 
 -- Teacher A ------------------------------------------------------------------
 
@@ -19,8 +24,8 @@ set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-00000000000a","r
 
 update public.profiles set lesson_price = 150, lesson_duration_min = 40 where id = auth.uid();
 
-insert into public.students (id, first_name, last_name, phone, prior_lessons, opening_balance)
-values ('11111111-1111-1111-1111-111111111111', 'יוסי', 'לוי', '0523333333', 3, -100);
+insert into public.students (id, profile_id, prior_lessons, opening_balance)
+values ('11111111-1111-1111-1111-111111111111', '00000000-0000-0000-0000-0000000000c1', 3, -100);
 
 select set_config('test.regular', (select id::text from public.lesson_types where name = 'שיעור רגיל'), true);
 select set_config('test.double',  (select id::text from public.lesson_types where name = 'שיעור כפול'), true);
@@ -163,8 +168,8 @@ select is_empty(
   'teacher B can''t delete A''s payments');
 
 -- B's own student, but A's lesson type
-insert into public.students (id, first_name, last_name, phone)
-values ('33333333-3333-3333-3333-333333333333', 'רון', 'דהן', '0548901234');
+insert into public.students (id, profile_id)
+values ('33333333-3333-3333-3333-333333333333', '00000000-0000-0000-0000-0000000000c2');
 
 select throws_ok(
   format($$ insert into public.lessons (student_id, lesson_type_id, starts_at, ends_at, status, awaiting)

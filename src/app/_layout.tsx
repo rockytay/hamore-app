@@ -6,7 +6,6 @@ import { AuthProvider, useAuth, useSession } from '@/hooks/use-auth';
 import { CalendarEventsProvider } from '@/hooks/use-calendar-events';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { StudentsProvider } from '@/hooks/use-students';
-import { UpdatesProvider } from '@/hooks/use-updates';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 
@@ -29,17 +28,15 @@ export default function RootLayout() {
 /**
  * Data that belongs to the signed-in account. Keyed by user id so nothing from one
  * account is ever shown to the next one. Students and the calendar come from the
- * database; the updates feed on the home screen is still in memory.
+ * database, and the updates feed on the home screen is built from them.
  */
 function SignedInProviders({ children }: PropsWithChildren) {
   const session = useSession();
   const accountKey = session?.userId ?? 'signed-out';
   return (
-    <UpdatesProvider key={accountKey}>
-      <StudentsProvider key={accountKey}>
-        <CalendarEventsProvider key={accountKey}>{children}</CalendarEventsProvider>
-      </StudentsProvider>
-    </UpdatesProvider>
+    <StudentsProvider key={accountKey}>
+      <CalendarEventsProvider key={accountKey}>{children}</CalendarEventsProvider>
+    </StudentsProvider>
   );
 }
 

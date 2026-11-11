@@ -3,12 +3,12 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useState,
   type PropsWithChildren,
 } from 'react';
 
 import { useSession } from '@/hooks/use-auth';
-import { useAddUpdate } from '@/hooks/use-updates';
 import { supabase } from '@/lib/supabase';
 
 /** Israeli driving licence categories. */
@@ -66,6 +66,23 @@ export type Student = {
   /** Passed the theory test. */
   theoryPassed?: boolean;
   createdAt: Date;
+  /** Set when the teacher removed the student from their list. History is kept. */
+  removal?: StudentRemoval;
+};
+
+export type RemovalReason = 'passed_test' | 'stopped' | 'other_teacher' | 'other';
+
+export const REMOVAL_REASON_LABELS: Record<RemovalReason, string> = {
+  passed_test: 'עבר/ה טסט',
+  stopped: 'הפסיק/ה ללמוד',
+  other_teacher: 'עבר/ה למורה אחר',
+  other: 'סיבה אחרת',
+};
+
+export type StudentRemoval = {
+  removedAt: Date;
+  reason: RemovalReason;
+  note: string;
 };
 
 export type PaymentMethod = 'cash' | 'bit' | 'paybox' | 'bank_transfer' | 'credit_card' | 'check';
@@ -88,16 +105,70 @@ export type Payment = {
   note: string;
 };
 
-export type NewPayment = { amount: number; method: PaymentMethod; note?: string };
+export type NewPayment = {
+  amount: number;
+  method: PaymentMethod;
+  note?: string;
+};
 
 /**
  * What the teacher fills in when adding a student; the rest is filled in automatically.
- * Here `lessonsCompleted` and `balance` are what the student brings from before joining.
+ * The student must already have an account: the database takes the name and phone
+ * from it. Here `lessonsCompleted` and `balance` are what the student brings from
+ * before joining.
  */
-export type NewStudent = Omit<Student, 'id' | 'name' | 'createdAt' | 'lessonNotes' | 'payments'> & {
+export type NewStudent = Omit<
+  Student,
+  'id' | 'name' | 'firstName' | 'lastName' | 'phone' | 'createdAt' | 'lessonNotes' | 'payments'
+> & {
+  /** The student's own account, found with findStudentAccount. */
+  profileId: string;
   /** Optional first note, e.g. the student's driving experience so far. */
   firstNote?: string;
 };
+
+/** A student account found by email, before the teacher adds it to their list. */
+export type StudentAccount = {
+  profileId: string;
+  firstName: string;
+  lastName: string;
+  phone: string;
+  /** The student is already on this teacher's list. */
+  alreadyAdded: boolean;
+  /** The student is on this teacher's former list; bring them back instead of adding. */
+  removedStudentId: string | null;
+};
+
+type StudentAccountRow = {
+  profile_id: string;
+  first_name: string;
+  last_name: string;
+  phone: string;
+  already_added: boolean;
+  removed_student_id: string | null;
+};
+
+/**
+ * Looks up a student account by its exact email. Returns null if no student signed
+ * up with that email. Throws StudentSaveError if the lookup itself fails.
+ */
+export async function findStudentAccount(email: string): Promise<StudentAccount | null> {
+  const { data, error } = await supabase.rpc('find_student_account', {
+    student_email: email.trim(),
+  });
+  if (error) throw new StudentSaveError('החיפוש נכשל. יש לבדוק את החיבור ולנסות שוב.');
+  // The database function returns a table: one row if found, none otherwise.
+  const row = (data as StudentAccountRow[] | null)?.[0];
+  if (!row) return null;
+  return {
+    profileId: row.profile_id,
+    firstName: row.first_name,
+    lastName: row.last_name,
+    phone: row.phone,
+    alreadyAdded: row.already_added,
+    removedStudentId: row.removed_student_id,
+  };
+}
 
 export type PaymentStatus = 'credit' | 'even' | 'debt';
 
@@ -150,11 +221,18 @@ type StudentRow = {
   prior_lessons: number;
   opening_balance: number;
   created_at: string;
+  removed_at: string | null;
+  removal_reason: RemovalReason | null;
+  removal_note: string;
   lesson_notes: LessonNoteRow[];
   payments: PaymentRow[];
 };
 
-type BalanceRow = { student_id: string; lessons_completed: number; balance: number };
+type BalanceRow = {
+  student_id: string;
+  lessons_completed: number;
+  balance: number;
+};
 
 const STUDENT_COLUMNS =
   '*, lesson_notes(id, body, created_at), payments(id, amount, method, paid_at, note)';
@@ -182,6 +260,10 @@ function toStudent(row: StudentRow, balance?: BalanceRow): Student {
     lessonsCompleted: balance?.lessons_completed ?? row.prior_lessons,
     balance: balance?.balance ?? row.opening_balance,
     createdAt: new Date(row.created_at),
+    removal:
+      row.removed_at && row.removal_reason
+        ? { removedAt: new Date(row.removed_at), reason: row.removal_reason, note: row.removal_note }
+        : undefined,
     lessonNotes: [...row.lesson_notes]
       .sort((a, b) => b.created_at.localeCompare(a.created_at))
       .map(toNote),
@@ -219,7 +301,7 @@ export class StudentSaveError extends Error {
   constructor(
     message: string,
     /** The form field the error belongs to, if any. */
-    readonly field?: 'phone'
+    readonly field?: 'email'
   ) {
     super(message);
   }
@@ -240,18 +322,21 @@ type StudentsContextValue = {
   addPayment: (studentId: string, payment: NewPayment) => Promise<string | null>;
   /** Saves the student and returns it. Throws StudentSaveError. */
   addStudent: (input: NewStudent) => Promise<Student>;
+  /** Moves a student to the former list. Returns an error in Hebrew, or null. */
+  removeStudent: (studentId: string, reason: RemovalReason, note?: string) => Promise<string | null>;
+  /** Brings a former student back to the list. Returns an error in Hebrew, or null. */
+  restoreStudent: (studentId: string) => Promise<string | null>;
 };
 
 const StudentsContext = createContext<StudentsContextValue | null>(null);
 
 /**
- * Holds the signed-in teacher's students for the whole app. Must be inside AuthProvider
- * and UpdatesProvider. Row-level security in the database makes sure a teacher only
+ * Holds the signed-in teacher's students for the whole app. Must be inside AuthProvider.
+ * Row-level security in the database makes sure a teacher only
  * ever receives their own organization's students.
  */
 export function StudentsProvider({ children }: PropsWithChildren) {
   const session = useSession();
-  const addUpdate = useAddUpdate();
   const teacherId = session?.role === 'teacher' ? session.userId : null;
 
   // The provider is keyed by account in the root layout, so this state starts
@@ -304,9 +389,8 @@ export function StudentsProvider({ children }: PropsWithChildren) {
     const { data, error: insertError } = await supabase
       .from('students')
       .insert({
-        first_name: input.firstName,
-        last_name: input.lastName,
-        phone: input.phone,
+        // The database copies the name and phone from this account.
+        profile_id: input.profileId,
         id_number: input.idNumber ?? null,
         license_category: input.licenseCategory,
         transmission: input.transmission,
@@ -318,10 +402,31 @@ export function StudentsProvider({ children }: PropsWithChildren) {
       .single<Omit<StudentRow, 'lesson_notes' | 'payments'>>();
 
     if (insertError || !data) {
-      if (insertError?.code === '23505') {
-        throw new StudentSaveError('כבר קיים תלמיד עם מספר הטלפון הזה', 'phone');
+      switch (insertError?.code) {
+        case '23505': {
+          // The phone is unique per teacher too, and that check can fire first even when the
+          // real reason is that this account is already on the list, so look for it directly.
+          const { count } = await supabase
+            .from('students')
+            .select('id', { count: 'exact', head: true })
+            .eq('profile_id', input.profileId);
+          throw new StudentSaveError(
+            count
+              ? 'התלמיד כבר נמצא ברשימת התלמידים שלך'
+              : 'כבר קיים ברשימה תלמיד עם מספר הטלפון של החשבון הזה',
+            'email'
+          );
+        }
+        // The database only accepts existing student accounts (see supabase/migrations).
+        case 'HM001':
+        case 'HM002':
+          throw new StudentSaveError(
+            'לא נמצא חשבון תלמיד. התלמיד צריך להירשם לאפליקציה קודם.',
+            'email'
+          );
+        default:
+          throw new StudentSaveError('שמירת התלמיד נכשלה. יש לנסות שוב.');
       }
-      throw new StudentSaveError('שמירת התלמיד נכשלה. יש לנסות שוב.');
     }
 
     let notes: LessonNoteRow[] = [];
@@ -338,7 +443,6 @@ export function StudentsProvider({ children }: PropsWithChildren) {
     // A new student has no lessons or payments yet, so the opening values are the balance.
     const student = toStudent({ ...data, lesson_notes: notes, payments: [] });
     setStudents((current) => [student, ...current]);
-    addUpdate({ kind: 'new-student', studentName: student.name });
     return student;
   };
 
@@ -382,9 +486,47 @@ export function StudentsProvider({ children }: PropsWithChildren) {
     return null;
   };
 
+  const setRemoval = async (studentId: string, removal: StudentRemoval | undefined) => {
+    const { error: updateError } = await supabase
+      .from('students')
+      .update({
+        removed_at: removal ? removal.removedAt.toISOString() : null,
+        removal_reason: removal?.reason ?? null,
+        removal_note: removal?.note ?? '',
+      })
+      .eq('id', studentId);
+    if (updateError) return false;
+    setStudents((current) =>
+      current.map((student) => (student.id === studentId ? { ...student, removal } : student))
+    );
+    return true;
+  };
+
+  // The database cancels the student's upcoming lessons; the calendar reloads them.
+  const removeStudent = async (studentId: string, reason: RemovalReason, note = '') => {
+    const saved = await setRemoval(studentId, { removedAt: new Date(), reason, note: note.trim() });
+    return saved ? null : 'הסרת התלמיד נכשלה. יש לנסות שוב.';
+  };
+
+  const restoreStudent = async (studentId: string) => {
+    const saved = await setRemoval(studentId, undefined);
+    return saved ? null : 'החזרת התלמיד נכשלה. יש לנסות שוב.';
+  };
+
   return (
     <StudentsContext
-      value={{ students, loading, error, reload, refreshBalances, addLessonNote, addPayment, addStudent }}>
+      value={{
+        students,
+        loading,
+        error,
+        reload,
+        refreshBalances,
+        addLessonNote,
+        addPayment,
+        addStudent,
+        removeStudent,
+        restoreStudent,
+      }}>
       {children}
     </StudentsContext>
   );
@@ -396,8 +538,26 @@ function useStudentsContext() {
   return context;
 }
 
-/** The teacher's students. */
+/** The teacher's current students. Removed students are left out; see useFormerStudents. */
 export function useStudents(): Student[] {
+  const { students } = useStudentsContext();
+  return useMemo(() => students.filter((student) => !student.removal), [students]);
+}
+
+/** Students the teacher removed from their list, most recently removed first. */
+export function useFormerStudents(): Student[] {
+  const { students } = useStudentsContext();
+  return useMemo(
+    () =>
+      students
+        .filter((student) => student.removal)
+        .sort((a, b) => b.removal!.removedAt.getTime() - a.removal!.removedAt.getTime()),
+    [students]
+  );
+}
+
+/** Current and former students, e.g. to name the student on a past lesson. */
+export function useAllStudents(): Student[] {
   return useStudentsContext().students;
 }
 
@@ -407,8 +567,19 @@ export function useStudentsStatus() {
   return { loading, error, reload };
 }
 
+/** A current or former student by id. */
 export function useStudent(id: string | undefined): Student | undefined {
-  return useStudents().find((student) => student.id === id);
+  return useAllStudents().find((student) => student.id === id);
+}
+
+/** Remove a student from the list (passed the test, stopped, ...). Returns an error in Hebrew, or null. */
+export function useRemoveStudent() {
+  return useStudentsContext().removeStudent;
+}
+
+/** Bring a former student back to the list. Returns an error in Hebrew, or null. */
+export function useRestoreStudent() {
+  return useStudentsContext().restoreStudent;
 }
 
 /** Add a lesson note (newest first) to a student's profile. Returns an error in Hebrew, or null. */

@@ -1,7 +1,16 @@
-import { createContext, useContext, useState, type PropsWithChildren } from 'react';
+import { useMemo } from 'react';
+
+import {
+  getEventEnd,
+  getEventStart,
+  useCalendarEvents,
+  type CalendarEvent,
+} from '@/hooks/use-calendar-events';
+import { useAllStudents, type RemovalReason, type Student } from '@/hooks/use-students';
 
 type UpdateBase = {
   id: string;
+  /** When it happened; the feed is sorted by this, newest first. */
   createdAt: Date;
   studentName: string;
 };
@@ -10,125 +19,103 @@ export type Update =
   | (UpdateBase & { kind: 'new-student' })
   /** The teacher scheduled a lesson and it is waiting for the student's approval. */
   | (UpdateBase & { kind: 'lesson-requested'; lessonTime: Date })
-  | (UpdateBase & {
-      kind: 'lesson-confirmed';
-      lessonTime: Date;
-      /** Who gave the final approval: the student (for a lesson the teacher set) or the teacher. */
-      approvedBy: 'student' | 'teacher';
-    })
+  /** A student asked for a lesson and it is waiting for the teacher's approval. */
+  | (UpdateBase & { kind: 'lesson-request-received'; lessonTime: Date })
+  | (UpdateBase & { kind: 'lesson-confirmed'; lessonTime: Date })
   | (UpdateBase & { kind: 'payment-received'; amount: number })
-  | (UpdateBase & { kind: 'payment-overdue'; daysLate: number });
+  /** The student owes the teacher money; amount is the debt in shekels. */
+  | (UpdateBase & { kind: 'student-debt'; amount: number })
+  /** The teacher removed the student from their list, e.g. after passing the test. */
+  | (UpdateBase & { kind: 'student-removed'; reason: RemovalReason });
 
-type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+/** Activity older than this is left out of the feed. Open debts are always shown. */
+const FEED_DAYS = 30;
+const MAX_UPDATES = 50;
+const DAY = 24 * 60 * 60_000;
 
-/** An update to add; its id and time are filled in automatically. */
-export type NewUpdate = DistributiveOmit<Update, 'id' | 'createdAt'>;
+function buildUpdates(students: Student[], events: CalendarEvent[], now: Date): Update[] {
+  const since = now.getTime() - FEED_DAYS * DAY;
+  const updates: Update[] = [];
 
-/** Show example updates on the home screen. Set to false to see the empty state. */
-const SHOW_SAMPLE_UPDATES = true;
+  for (const student of students) {
+    updates.push({
+      id: `student-${student.id}`,
+      kind: 'new-student',
+      studentName: student.name,
+      createdAt: student.createdAt,
+    });
+    for (const payment of student.payments) {
+      updates.push({
+        id: `payment-${payment.id}`,
+        kind: 'payment-received',
+        studentName: student.name,
+        amount: payment.amount,
+        createdAt: payment.paidAt,
+      });
+    }
+    if (student.removal) {
+      updates.push({
+        id: `removed-${student.id}`,
+        kind: 'student-removed',
+        studentName: student.name,
+        reason: student.removal.reason,
+        createdAt: student.removal.removedAt,
+      });
+    }
+  }
 
-const MINUTE = 60_000;
-const HOUR = 60 * MINUTE;
-const DAY = 24 * HOUR;
+  for (const event of events) {
+    if (event.status === 'available' || !event.createdAt || !event.updatedAt) continue;
+    const lessonTime = getEventStart(event);
+    const base = { studentName: event.studentName, lessonTime };
+    if (event.status === 'booked') {
+      updates.push({
+        ...base,
+        id: `confirmed-${event.id}`,
+        kind: 'lesson-confirmed',
+        createdAt: event.updatedAt,
+      });
+    } else if (lessonTime > now) {
+      // A request for a time that has already passed is no longer worth a notification.
+      updates.push({
+        ...base,
+        id: `pending-${event.id}`,
+        kind: event.awaiting === 'student' ? 'lesson-requested' : 'lesson-request-received',
+        createdAt: event.createdAt,
+      });
+    }
+  }
 
-function daysFromNowAt(days: number, hour: number) {
-  const date = new Date(Date.now() + days * DAY);
-  date.setHours(hour, 0, 0, 0);
-  return date;
+  const recent = updates.filter((update) => update.createdAt.getTime() >= since);
+
+  // A debt is still relevant however old it is. Date it from the student's last lesson.
+  for (const student of students) {
+    if (student.balance >= 0) continue;
+    const lastLessonEnd = events
+      .filter((e) => e.status === 'booked' && e.studentId === student.id)
+      .map((e) => getEventEnd(e))
+      .filter((end) => end <= now)
+      .sort((a, b) => b.getTime() - a.getTime())[0];
+    recent.push({
+      id: `debt-${student.id}`,
+      kind: 'student-debt',
+      studentName: student.name,
+      amount: -student.balance,
+      createdAt: lastLessonEnd ?? student.createdAt,
+    });
+  }
+
+  return recent.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()).slice(0, MAX_UPDATES);
 }
-
-function getSampleUpdates(): Update[] {
-  const now = Date.now();
-  return [
-    { id: '1', kind: 'new-student', studentName: 'דנה כהן', createdAt: new Date(now - 5 * MINUTE) },
-    {
-      id: '2',
-      kind: 'payment-received',
-      studentName: 'נועה מזרחי',
-      amount: 150,
-      createdAt: new Date(now - 40 * MINUTE),
-    },
-    {
-      id: '3',
-      kind: 'lesson-confirmed',
-      studentName: 'יוסי לוי',
-      lessonTime: daysFromNowAt(1, 17),
-      approvedBy: 'student',
-      createdAt: new Date(now - 2 * HOUR),
-    },
-    {
-      id: '4',
-      kind: 'payment-overdue',
-      studentName: 'אבי פרץ',
-      daysLate: 3,
-      createdAt: new Date(now - 5 * HOUR),
-    },
-    {
-      id: '5',
-      kind: 'lesson-confirmed',
-      studentName: 'מיכל אברהם',
-      lessonTime: daysFromNowAt(3, 10),
-      approvedBy: 'student',
-      createdAt: new Date(now - DAY),
-    },
-    {
-      id: '6',
-      kind: 'payment-received',
-      studentName: 'עומר ביטון',
-      amount: 200,
-      createdAt: new Date(now - DAY - 4 * HOUR),
-    },
-    { id: '7', kind: 'new-student', studentName: 'שירה גולן', createdAt: new Date(now - 2 * DAY) },
-    {
-      id: '8',
-      kind: 'payment-overdue',
-      studentName: 'רון דהן',
-      daysLate: 1,
-      createdAt: new Date(now - 4 * DAY),
-    },
-  ];
-}
-
-type UpdatesContextValue = {
-  updates: Update[];
-  addUpdate: (update: NewUpdate) => void;
-};
-
-const UpdatesContext = createContext<UpdatesContextValue | null>(null);
 
 /**
- * Holds the teacher's updates and notifications for the whole app.
- * The app is not connected to a backend yet, so updates are kept in memory only.
+ * Updates and notifications for the teacher, newest first. Built from the students,
+ * lessons and payments loaded from the database, so they follow the data and need
+ * no separate storage.
  */
-export function UpdatesProvider({ children }: PropsWithChildren) {
-  const [updates, setUpdates] = useState<Update[]>(() =>
-    SHOW_SAMPLE_UPDATES ? getSampleUpdates() : []
-  );
-
-  const addUpdate = (update: NewUpdate) => {
-    const created = {
-      ...update,
-      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      createdAt: new Date(),
-    } as Update;
-    setUpdates((current) => [created, ...current]);
-  };
-
-  return <UpdatesContext value={{ updates, addUpdate }}>{children}</UpdatesContext>;
-}
-
-function useUpdatesContext() {
-  const context = useContext(UpdatesContext);
-  if (!context) throw new Error('useUpdates must be used inside UpdatesProvider');
-  return context;
-}
-
-/** Updates and notifications for the teacher, newest first. */
 export function useUpdates(): Update[] {
-  return useUpdatesContext().updates;
-}
-
-/** Add a new update to the top of the home screen feed. */
-export function useAddUpdate() {
-  return useUpdatesContext().addUpdate;
+  // Former students too: their history stays, and a debt is still owed after they leave.
+  const students = useAllStudents();
+  const { events } = useCalendarEvents();
+  return useMemo(() => buildUpdates(students, events, new Date()), [students, events]);
 }

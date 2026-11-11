@@ -1,9 +1,11 @@
 import { SymbolView, type SymbolViewProps } from 'expo-symbols';
 import { FlatList, StyleSheet, View } from 'react-native';
 
+import { formatShekels } from '@/components/payment-badge';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing, type ThemeColor } from '@/constants/theme';
+import { REMOVAL_REASON_LABELS } from '@/hooks/use-students';
 import type { Update } from '@/hooks/use-updates';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -52,37 +54,67 @@ function getUpdateDisplay(update: Update): UpdateDisplay {
       return {
         title: 'תלמיד חדש',
         body: `${update.studentName} נוסף/ה לרשימת התלמידים`,
-        icon: { ios: 'person.badge.plus', android: 'person_add', web: 'person_add' },
+        icon: {
+          ios: 'person.badge.plus',
+          android: 'person_add',
+          web: 'person_add',
+        },
         color: 'accent',
       };
     case 'lesson-requested':
       return {
         title: 'שיעור נקבע',
         body: `קבעת שיעור עם ${update.studentName}: ${formatLessonTime(update.lessonTime)} · ממתין לאישור התלמיד`,
-        icon: { ios: 'calendar.badge.clock', android: 'schedule', web: 'schedule' },
+        icon: {
+          ios: 'calendar.badge.clock',
+          android: 'schedule',
+          web: 'schedule',
+        },
+        color: 'slotPending',
+      };
+    case 'lesson-request-received':
+      return {
+        title: 'בקשה לשיעור',
+        body: `${update.studentName} ביקש/ה שיעור: ${formatLessonTime(update.lessonTime)} · ממתין לאישורך`,
+        icon: {
+          ios: 'calendar.badge.exclamationmark',
+          android: 'event_note',
+          web: 'event_note',
+        },
         color: 'slotPending',
       };
     case 'lesson-confirmed':
       return {
         title: 'שיעור אושר',
-        body:
-          update.approvedBy === 'student'
-            ? `${update.studentName} אישר/ה את מועד השיעור: ${formatLessonTime(update.lessonTime)}`
-            : `אישרת את השיעור עם ${update.studentName}: ${formatLessonTime(update.lessonTime)}`,
+        body: `השיעור עם ${update.studentName} אושר: ${formatLessonTime(update.lessonTime)}`,
         icon: { ios: 'calendar.badge.checkmark', android: 'event_available', web: 'event_available' },
         color: 'accent',
       };
+    case 'student-removed':
+      return update.reason === 'passed_test'
+        ? {
+            title: 'עבר/ה טסט',
+            body: `${update.studentName} עבר/ה את הטסט והועבר/ה לתלמידים לשעבר`,
+            icon: { ios: 'graduationcap.fill', android: 'school', web: 'school' },
+            color: 'slotAvailable',
+          }
+        : {
+            title: 'תלמיד הוסר',
+            body: `${update.studentName} הוסר/ה מרשימת התלמידים (${REMOVAL_REASON_LABELS[update.reason]})`,
+            icon: { ios: 'person.badge.minus', android: 'person_remove', web: 'person_remove' },
+            color: 'textSecondary',
+          };
     case 'payment-received':
       return {
         title: 'התקבל תשלום',
-        body: `${update.studentName} שילם/ה ₪${update.amount} עבור השיעור`,
+        body: `${update.studentName} שילם/ה ${formatShekels(update.amount)}`,
         icon: { ios: 'creditcard.fill', android: 'payments', web: 'payments' },
         color: 'accent',
       };
-    case 'payment-overdue':
+    case 'student-debt':
       return {
-        title: 'תשלום באיחור',
-        body: `${update.studentName} מאחר/ת בתשלום כבר ${formatDays(update.daysLate)}`,
+        title: 'חוב פתוח',
+        body: `ל${update.studentName} יש חוב של ${formatShekels(update.amount)}`,
         icon: {
           ios: 'exclamationmark.triangle.fill',
           android: 'warning',

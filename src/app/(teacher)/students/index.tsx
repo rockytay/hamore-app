@@ -8,7 +8,13 @@ import { PaymentBadge } from '@/components/payment-badge';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
-import { TRANSMISSION_LABELS, useStudents, type Student } from '@/hooks/use-students';
+import {
+  REMOVAL_REASON_LABELS,
+  TRANSMISSION_LABELS,
+  useFormerStudents,
+  useStudents,
+  type Student,
+} from '@/hooks/use-students';
 import { useTheme } from '@/hooks/use-theme';
 
 /** Matches a name, or a phone number with or without dashes. */
@@ -24,8 +30,13 @@ function matchesSearch(student: Student, query: string) {
 
 export default function StudentsScreen() {
   const theme = useTheme();
-  const students = useStudents();
+  const current = useStudents();
+  const former = useFormerStudents();
+  const [showFormer, setShowFormer] = useState(false);
   const [query, setQuery] = useState('');
+  // Fall back to the current list if the last former student was brought back.
+  const showingFormer = showFormer && former.length > 0;
+  const students = showingFormer ? former : current;
   const results = students.filter((student) => matchesSearch(student, query));
 
   return (
@@ -34,9 +45,29 @@ export default function StudentsScreen() {
         <View style={styles.header}>
           <ThemedText type="subtitle">רשימת תלמידים</ThemedText>
           <ThemedText type="small" themeColor="textSecondary">
-            {students.length} תלמידים
+            {current.length} תלמידים פעילים
           </ThemedText>
         </View>
+
+        {former.length > 0 && (
+          <ThemedView type="backgroundElement" style={styles.tabs}>
+            {[false, true].map((isFormer) => {
+              const selected = showingFormer === isFormer;
+              return (
+                <Pressable
+                  key={String(isFormer)}
+                  onPress={() => setShowFormer(isFormer)}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected }}
+                  style={[styles.tab, selected && { backgroundColor: theme.background }]}>
+                  <ThemedText type={selected ? 'smallBold' : 'small'}>
+                    {isFormer ? `לשעבר (${former.length})` : `פעילים (${current.length})`}
+                  </ThemedText>
+                </Pressable>
+              );
+            })}
+          </ThemedView>
+        )}
 
         {students.length > 0 && (
           <ThemedView type="backgroundElement" style={styles.search}>
@@ -97,11 +128,13 @@ function StudentRow({ student }: { student: Student }) {
           <View style={styles.rowText}>
             <ThemedText type="smallBold">{student.name}</ThemedText>
             <ThemedText type="small" themeColor="textSecondary">
-              דרגה {student.licenseCategory} · {TRANSMISSION_LABELS[student.transmission]} ·{' '}
-              {student.lessonsCompleted} שיעורים
+              {student.removal
+                ? `${REMOVAL_REASON_LABELS[student.removal.reason]} · ${student.removal.removedAt.toLocaleDateString('he-IL')}`
+                : `דרגה ${student.licenseCategory} · ${TRANSMISSION_LABELS[student.transmission]} · ${student.lessonsCompleted} שיעורים`}
             </ThemedText>
           </View>
-          <PaymentBadge balance={student.balance} />
+          {/* A former student only shows a badge if money is still owed. */}
+          {(!student.removal || student.balance < 0) && <PaymentBadge balance={student.balance} />}
         </ThemedView>
       </Pressable>
     </Link>
@@ -138,6 +171,17 @@ const styles = StyleSheet.create({
   rowText: {
     flex: 1,
     gap: Spacing.half,
+  },
+  tabs: {
+    flexDirection: 'row',
+    padding: Spacing.half,
+    borderRadius: Spacing.three,
+  },
+  tab: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: Spacing.two,
+    borderRadius: Spacing.three - Spacing.half,
   },
   search: {
     flexDirection: 'row',

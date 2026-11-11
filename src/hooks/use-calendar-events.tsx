@@ -10,8 +10,7 @@ import {
 
 import { useSession } from '@/hooks/use-auth';
 import type { CurrentUser } from '@/hooks/use-current-user';
-import { useStudents } from '@/hooks/use-students';
-import { useAddUpdate } from '@/hooks/use-updates';
+import { useAllStudents } from '@/hooks/use-students';
 import { supabase } from '@/lib/supabase';
 
 /** A kind of lesson the teacher offers, e.g. regular, double or test. */
@@ -31,6 +30,9 @@ export type LessonDetails = {
   lessonTypeName: string;
   /** In shekels, fixed when the lesson was created. Unknown until saved. */
   price?: number;
+  /** When the lesson was saved, and last changed (e.g. approved). Unknown until saved. */
+  createdAt?: Date;
+  updatedAt?: Date;
 };
 
 /**
@@ -100,7 +102,7 @@ export function getEventStart(event: CalendarEvent) {
   return new Date(year, month - 1, day, 0, event.startMin);
 }
 
-function getEventEnd(event: CalendarEvent) {
+export function getEventEnd(event: CalendarEvent) {
   const [year, month, day] = event.dateKey.split('-').map(Number);
   return new Date(year, month - 1, day, 0, event.endMin);
 }
@@ -120,12 +122,15 @@ type LessonRow = {
   status: 'pending' | 'booked' | 'cancelled';
   awaiting: 'teacher' | 'student' | null;
   price: number;
+  created_at: string;
+  updated_at: string;
 };
 
 type LessonTypeRow = { id: string; name: string; duration_min: number; price: number | null };
 
 const SLOT_COLUMNS = 'id, starts_at, ends_at';
-const LESSON_COLUMNS = 'id, student_id, lesson_type_id, starts_at, ends_at, status, awaiting, price';
+const LESSON_COLUMNS =
+  'id, student_id, lesson_type_id, starts_at, ends_at, status, awaiting, price, created_at, updated_at';
 
 function toTimes(startsAt: string, endsAt: string) {
   const start = new Date(startsAt);
@@ -167,8 +172,8 @@ async function fetchCalendar() {
 function useCalendarState() {
   const session = useSession();
   const teacherId = session?.role === 'teacher' ? session.userId : null;
-  const addUpdate = useAddUpdate();
-  const students = useStudents();
+  // Former students too, so past lessons keep their student's name.
+  const students = useAllStudents();
 
   const [slots, setSlots] = useState<SlotRow[]>([]);
   const [lessons, setLessons] = useState<LessonRow[]>([]);
@@ -222,6 +227,8 @@ function useCalendarState() {
           lessonTypeId: row.lesson_type_id,
           lessonTypeName: typeNames.get(row.lesson_type_id) ?? '',
           price: row.price,
+          createdAt: new Date(row.created_at),
+          updatedAt: new Date(row.updated_at),
         };
         const times = { id: row.id, ...toTimes(row.starts_at, row.ends_at) };
         return row.status === 'pending' && row.awaiting
@@ -257,7 +264,11 @@ function useCalendarState() {
     const result = isNew
       ? await supabase
           .from('lessons')
-          .insert({ ...fields, student_id: event.studentId, lesson_type_id: event.lessonTypeId })
+          .insert({
+            ...fields,
+            student_id: event.studentId,
+            lesson_type_id: event.lessonTypeId,
+          })
           .select(LESSON_COLUMNS)
           .single<LessonRow>()
       : await supabase.from('lessons').update(fields).eq('id', event.id).select(LESSON_COLUMNS).single<LessonRow>();
@@ -275,12 +286,7 @@ function useCalendarState() {
     }
     const isNew = event.id.startsWith(NEW_ID_PREFIX);
     const error = isLesson(event) ? await saveLesson(event, isNew) : await saveAvailability(event, isNew);
-    if (error) return error;
-
-    if (isNew && event.status === 'pending' && event.awaiting === 'student') {
-      addUpdate({ kind: 'lesson-requested', studentName: event.studentName, lessonTime: getEventStart(event) });
-    }
-    return null;
+    return error;
   };
 
   /** Deletes open time, or cancels a lesson (kept in the database for history). */
@@ -299,8 +305,8 @@ function useCalendarState() {
     return null;
   };
 
-  /** A pending lesson becomes confirmed, and the home screen gets a notification. */
-  const confirm = async (id: string, approvedBy: 'student' | 'teacher'): Promise<string | null> => {
+  /** A pending lesson becomes confirmed. The home screen feed picks it up from the lesson. */
+  const confirm = async (id: string): Promise<string | null> => {
     const event = events.find((e) => e.id === id);
     if (event?.status !== 'pending') return null;
     const { data, error } = await supabase
@@ -311,12 +317,6 @@ function useCalendarState() {
       .single<LessonRow>();
     if (error || !data) return describeError(error?.code, true);
     setLessons((current) => current.map((row) => (row.id === id ? data : row)));
-    addUpdate({
-      kind: 'lesson-confirmed',
-      studentName: event.studentName,
-      lessonTime: getEventStart(event),
-      approvedBy,
-    });
     return null;
   };
 
@@ -329,12 +329,12 @@ function useCalendarState() {
     saveEvent,
     removeEvent,
     /** The teacher approves a lesson request from a student. */
-    approve: (id: string) => confirm(id, 'teacher'),
+    approve: (id: string) => confirm(id),
     /**
      * The student approves a lesson the teacher scheduled. There is no student app yet,
      * so this is only triggered from a development-only button in the editor.
      */
-    studentApprove: (id: string) => confirm(id, 'student'),
+    studentApprove: (id: string) => confirm(id),
   };
 }
 
@@ -342,7 +342,7 @@ const CalendarEventsContext = createContext<ReturnType<typeof useCalendarState> 
 
 /**
  * Holds the signed-in teacher's calendar (open time and lessons) and lesson types.
- * Must be inside StudentsProvider and UpdatesProvider, and keyed by account.
+ * Must be inside StudentsProvider, and keyed by account.
  */
 export function CalendarEventsProvider({ children }: PropsWithChildren) {
   const value = useCalendarState();

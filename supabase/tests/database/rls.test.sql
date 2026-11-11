@@ -13,7 +13,12 @@ insert into auth.users (id, email, raw_user_meta_data) values
   ('00000000-0000-0000-0000-00000000000b', 'b@test.local',
    '{"role":"teacher","first_name":"בני","last_name":"מורה","phone":"0502222222"}'),
   ('00000000-0000-0000-0000-00000000000c', 'c@test.local',
-   '{"role":"student","first_name":"דנה","last_name":"תלמידה"}');
+   '{"role":"student","first_name":"דנה","last_name":"תלמידה"}'),
+  -- Students teachers add below. A teacher can only add someone who signed up as a student.
+  ('00000000-0000-0000-0000-00000000000d', 'd@test.local',
+   '{"role":"student","first_name":"יוסי","last_name":"לוי","phone":"0523333333"}'),
+  ('00000000-0000-0000-0000-00000000000e', 'e@test.local',
+   '{"role":"student","first_name":"זר","last_name":"זר","phone":"0524444444"}');
 
 -- Remember A's organization while we can still see everything.
 select set_config('test.org_a',
@@ -23,7 +28,8 @@ select set_config('test.org_a',
 -- Sign-up trigger -----------------------------------------------------------
 
 select is(
-  (select count(*)::int from public.organizations), 2,
+  (select count(distinct organization_id)::int from public.profiles
+    where id::text like '00000000-0000-0000-0000-%' and organization_id is not null), 2,
   'each teacher gets an organization, the student does not');
 
 select is(
@@ -48,8 +54,8 @@ set local role authenticated;
 set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-00000000000a","role":"authenticated"}';
 
 select lives_ok(
-  $$ insert into public.students (id, first_name, last_name, phone)
-     values ('11111111-1111-1111-1111-111111111111', 'יוסי', 'לוי', '0523333333') $$,
+  $$ insert into public.students (id, profile_id)
+     values ('11111111-1111-1111-1111-111111111111', '00000000-0000-0000-0000-00000000000d') $$,
   'teacher A adds a student without sending an organization');
 
 select lives_ok(
@@ -83,8 +89,8 @@ select is_empty(
 
 select throws_ok(
   format(
-    $$ insert into public.students (organization_id, first_name, last_name, phone)
-       values (%L, 'זר', 'זר', '0524444444') $$,
+    $$ insert into public.students (organization_id, profile_id)
+       values (%L, '00000000-0000-0000-0000-00000000000e') $$,
     current_setting('test.org_a')),
   '42501', null, 'teacher B cannot insert a student into A''s organization');
 
@@ -106,7 +112,7 @@ select throws_ok(
 set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-00000000000c","role":"authenticated"}';
 
 select throws_ok(
-  $$ insert into public.students (first_name, last_name, phone) values ('x', 'y', '0529999999') $$,
+  $$ insert into public.students (profile_id) values ('00000000-0000-0000-0000-00000000000e') $$,
   '42501', null, 'a student account cannot create students');
 
 select is((select count(*)::int from public.students), 0, 'a student account sees no students');

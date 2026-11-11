@@ -31,6 +31,10 @@ npm start
 ```
 
 Sample sign-in: `israel@example.com` / `123456` (teacher), `dana@example.com` / `123456` (student).
+The other sample students sign in as `student2@example.com` … `student8@example.com`, same password.
+
+A teacher can only add students who already signed up as students: the "+" screen finds them
+by email, and the database takes the name and phone from the student's own account.
 Development builds show a button on the sign-in screen that fills these in.
 
 ## Database
