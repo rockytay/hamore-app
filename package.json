@@ -48,7 +48,8 @@
     "db:stop": "supabase stop",
     "db:reset": "supabase db reset",
     "db:test": "supabase test db",
-    "seed:dev": "node --env-file=.env.local scripts/seed-dev.mjs"
+    "seed:dev": "node --env-file=.env.local scripts/seed-dev.mjs",
+    "db:clear-users": "node --env-file-if-exists=.env.local scripts/clear-users.mjs"
   },
   "private": true
 }

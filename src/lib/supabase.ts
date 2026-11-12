@@ -19,6 +19,9 @@ export const supabase = createClient(supabaseUrl, supabasePublishableKey, {
     autoRefreshToken: true,
     persistSession: true,
     detectSessionInUrl: false,
+    // Email links come back to the app as ?code=..., which the auth/callback screen
+    // exchanges for a session (see src/app/auth/callback.tsx).
+    flowType: 'pkce',
   },
 });
 

@@ -1,4 +1,5 @@
 import type { Session as SupabaseSession } from '@supabase/supabase-js';
+import * as Linking from 'expo-linking';
 import {
   createContext,
   useCallback,
@@ -229,6 +230,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
       email: input.email.trim(),
       password: input.password,
       options: {
+        // The confirmation email opens the app, which finishes signing in.
+        // hamoreapp://auth/callback in a build; an exp:// address in Expo Go.
+        emailRedirectTo: Linking.createURL('auth/callback'),
         data: {
           role: input.role,
           first_name: input.firstName.trim(),
@@ -241,7 +245,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
     });
     if (error) return translateAuthError(error.message);
     // Email confirmation is off locally. If it is on (hosted project), there is no session yet.
-    if (!data.session) return 'נשלח אליכם אימייל לאישור החשבון. אחרי האישור אפשר להתחבר.';
+    if (!data.session) {
+      return 'נשלח אליכם אימייל לאישור החשבון. פתחו את הקישור שבאימייל בטלפון הזה כדי להיכנס לאפליקציה.';
+    }
     return null;
   };
 

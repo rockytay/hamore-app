@@ -61,6 +61,9 @@ function RootNavigator() {
         <Stack.Screen name="sign-in" />
         <Stack.Screen name="sign-up" options={{ animation: 'slide_from_left' }} />
       </Stack.Protected>
+
+      {/* Opened by the link in the confirmation email, signed in or not. */}
+      <Stack.Screen name="auth/callback" />
     </Stack>
   );
 }
