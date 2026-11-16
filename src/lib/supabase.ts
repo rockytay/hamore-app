@@ -1,4 +1,5 @@
 import 'expo-sqlite/localStorage/install';
+import '@/lib/crypto-polyfill';
 import { createClient } from '@supabase/supabase-js';
 import { AppState } from 'react-native';
 

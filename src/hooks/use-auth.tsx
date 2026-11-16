@@ -130,9 +130,29 @@ function toProfileColumns(changes: Partial<CurrentUser>) {
   return columns;
 }
 
-/** Supabase's English auth errors, in Hebrew. */
-function translateAuthError(message: string): string {
-  const text = message.toLowerCase();
+/** Supabase's English auth errors, in Hebrew. Logs the original error in development. */
+function translateAuthError(error: { message: string; code?: string }): string {
+  if (__DEV__) console.warn('Supabase auth error:', error.code ?? '(no code)', error.message);
+  const text = error.message.toLowerCase();
+  const code = error.code ?? '';
+  if (code === 'over_email_send_rate_limit' || text.includes('email rate limit')) {
+    return 'נשלחו יותר מדי אימיילים בזמן קצר. יש לנסות שוב מאוחר יותר.';
+  }
+  if (text.includes('error sending') && text.includes('email')) {
+    return 'לא הצלחנו לשלוח את אימייל האישור. יש לנסות שוב מאוחר יותר.';
+  }
+  if (code === 'over_request_rate_limit' || text.includes('for security purposes')) {
+    return 'יותר מדי ניסיונות. יש להמתין דקה ולנסות שוב.';
+  }
+  if (code === 'email_address_invalid' || text.includes('is invalid')) {
+    return 'כתובת האימייל נדחתה. יש להשתמש בכתובת אימייל אמיתית.';
+  }
+  if (code === 'signup_disabled' || text.includes('signups not allowed')) {
+    return 'ההרשמה סגורה כרגע.';
+  }
+  if (code === 'unexpected_failure' || text.includes('database error')) {
+    return 'שמירת החשבון נכשלה בשרת. יש לנסות שוב.';
+  }
   if (text.includes('invalid login credentials')) return 'האימייל או הסיסמה שגויים.';
   if (text.includes('already registered') || text.includes('already been registered')) {
     return 'כבר קיים חשבון עם כתובת האימייל הזו.';
@@ -208,7 +228,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       email: email.trim(),
       password,
     });
-    if (error) return translateAuthError(error.message);
+    if (error) return translateAuthError(error);
 
     const loaded = await loadProfile(data.user.id);
     if (!loaded) {
@@ -243,7 +263,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
         },
       },
     });
-    if (error) return translateAuthError(error.message);
+    if (error) return translateAuthError(error);
     // Email confirmation is off locally. If it is on (hosted project), there is no session yet.
     if (!data.session) {
       return 'נשלח אליכם אימייל לאישור החשבון. פתחו את הקישור שבאימייל בטלפון הזה כדי להיכנס לאפליקציה.';
