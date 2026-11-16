@@ -1,3 +1,4 @@
+import { useFocusEffect } from 'expo-router';
 import {
   createContext,
   useCallback,
@@ -204,10 +205,14 @@ function useCalendarState() {
     };
   }, [teacherId, apply]);
 
-  const reload = useCallback(async () => {
-    setLoading(true);
-    apply(await fetchCalendar());
-  }, [apply]);
+  /** Loads the calendar again; `quiet` keeps showing the current one instead of a spinner. */
+  const reload = useCallback(
+    async (quiet = false) => {
+      if (!quiet) setLoading(true);
+      apply(await fetchCalendar());
+    },
+    [apply]
+  );
 
   const lessonTypes = useMemo<LessonType[]>(
     () =>
@@ -354,6 +359,19 @@ export function useCalendarEvents() {
   const context = useContext(CalendarEventsContext);
   if (!context) throw new Error('useCalendarEvents must be used inside CalendarEventsProvider');
   return context;
+}
+
+/**
+ * Loads the calendar again, without a spinner, whenever the screen comes into view,
+ * so lesson requests and answers from students show up.
+ */
+export function useRefreshCalendarOnFocus() {
+  const { reload } = useCalendarEvents();
+  useFocusEffect(
+    useCallback(() => {
+      reload(true);
+    }, [reload])
+  );
 }
 
 /** The lesson types the teacher offers, in their display order. */

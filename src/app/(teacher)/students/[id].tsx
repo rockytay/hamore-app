@@ -6,6 +6,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   TextInput,
   View,
 } from 'react-native';
@@ -26,9 +27,12 @@ import {
   useAddPayment,
   useRemoveStudent,
   useRestoreStudent,
+  useSetNoteShared,
+  useSetTheoryPassed,
   useStudent,
   useStudents,
   type PaymentMethod,
+  type LessonNote,
   type RemovalReason,
   type Student,
 } from '@/hooks/use-students';
@@ -74,11 +78,14 @@ export default function StudentDetailsScreen() {
           <Pressable onPress={() => Linking.openURL(`tel:${student.phone.replace(/-/g, '')}`)}>
             <ThemedText themeColor="accent">{student.phone}</ThemedText>
           </Pressable>
-          <ThemedText type="small" themeColor="textSecondary">
-            {student.theoryPassed ? 'עבר/ה תאוריה' : 'טרם עבר/ה תאוריה'}
-            {student.idNumber ? ` · ת״ז ${student.idNumber}` : ''}
-          </ThemedText>
+          {student.idNumber && (
+            <ThemedText type="small" themeColor="textSecondary">
+              ת״ז {student.idNumber}
+            </ThemedText>
+          )}
         </View>
+
+        <TheoryRow student={student} />
 
         <View style={styles.stats}>
           <Stat label="שיעורים שבוצעו" value={String(student.lessonsCompleted)} />
@@ -97,14 +104,7 @@ export default function StudentDetailsScreen() {
               אין עדיין הערות.
             </ThemedText>
           ) : (
-            student.lessonNotes.map((note) => (
-              <ThemedView key={note.id} type="backgroundElement" style={styles.note}>
-                <ThemedText type="small" themeColor="textSecondary">
-                  {formatDate(note.date)}
-                </ThemedText>
-                <ThemedText type="small">{note.text}</ThemedText>
-              </ThemedView>
-            ))
+            student.lessonNotes.map((note) => <NoteRow key={note.id} studentId={student.id} note={note} />)
           )}
         </Section>
 
@@ -298,10 +298,80 @@ function RemoveStudentSection({ student }: { student: Student }) {
   );
 }
 
+/** Whether the student passed the theory test. The student app reminds them until they do. */
+function TheoryRow({ student }: { student: Student }) {
+  const theme = useTheme();
+  const setTheoryPassed = useSetTheoryPassed();
+  const [busy, setBusy] = useState(false);
+
+  const change = async (passed: boolean) => {
+    setBusy(true);
+    const error = await setTheoryPassed(student.id, passed);
+    setBusy(false);
+    if (error) showMessage('שגיאה', error);
+  };
+
+  return (
+    <ThemedView type="backgroundElement" style={styles.switchRow}>
+      <View style={styles.switchText}>
+        <ThemedText type="small">עבר/ה מבחן תאוריה</ThemedText>
+        <ThemedText type="small" themeColor="textSecondary" style={styles.hint}>
+          {student.theoryPassed ? 'מוכן/ה לקראת טסט' : 'התלמיד/ה יקבל/תקבל תזכורת באפליקציה'}
+        </ThemedText>
+      </View>
+      <Switch
+        value={student.theoryPassed ?? false}
+        disabled={busy || !!student.removal}
+        onValueChange={change}
+        trackColor={{ true: theme.accent, false: theme.backgroundSelected }}
+      />
+    </ThemedView>
+  );
+}
+
+/** A lesson note, with whether the student can see it in their app. */
+function NoteRow({ studentId, note }: { studentId: string; note: LessonNote }) {
+  const theme = useTheme();
+  const setNoteShared = useSetNoteShared();
+  const [busy, setBusy] = useState(false);
+
+  const toggle = async () => {
+    setBusy(true);
+    const error = await setNoteShared(studentId, note.id, !note.shared);
+    setBusy(false);
+    if (error) showMessage('שגיאה', error);
+  };
+
+  return (
+    <ThemedView type="backgroundElement" style={styles.note}>
+      <ThemedText type="small" themeColor="textSecondary">
+        {formatDate(note.date)}
+      </ThemedText>
+      <ThemedText type="small">{note.text}</ThemedText>
+      <Pressable
+        disabled={busy}
+        onPress={toggle}
+        accessibilityRole="switch"
+        accessibilityState={{ checked: note.shared }}
+        style={({ pressed }) => [
+          styles.shareChip,
+          { backgroundColor: note.shared ? theme.accent : theme.background },
+          pressed && styles.pressed,
+        ]}>
+        <ThemedText type="small" style={note.shared ? styles.whiteText : undefined} themeColor="textSecondary">
+          {note.shared ? 'גלוי לתלמיד ✓' : 'פרטי · הצגה לתלמיד'}
+        </ThemedText>
+      </Pressable>
+    </ThemedView>
+  );
+}
+
 function NoteComposer({ studentId }: { studentId: string }) {
   const theme = useTheme();
   const addLessonNote = useAddLessonNote();
   const [text, setText] = useState('');
+  // Private unless the teacher chooses to share, like in the database.
+  const [shared, setShared] = useState(false);
   const trimmed = text.trim();
 
   return (
@@ -314,12 +384,22 @@ function NoteComposer({ studentId }: { studentId: string }) {
         multiline
         style={[styles.input, { color: theme.text, backgroundColor: theme.background }]}
       />
+      <View style={styles.switchRowInline}>
+        <ThemedText type="small" style={styles.switchText}>
+          הצגת ההערה לתלמיד באפליקציה
+        </ThemedText>
+        <Switch
+          value={shared}
+          onValueChange={setShared}
+          trackColor={{ true: theme.accent, false: theme.backgroundSelected }}
+        />
+      </View>
       <Pressable
         disabled={!trimmed}
         onPress={async () => {
           setText('');
           Keyboard.dismiss();
-          const error = await addLessonNote(studentId, trimmed);
+          const error = await addLessonNote(studentId, trimmed, shared);
           if (error) {
             setText(trimmed);
             showMessage('שגיאה', error);
@@ -495,6 +575,33 @@ const styles = StyleSheet.create({
     gap: Spacing.half,
     padding: Spacing.three,
     borderRadius: Spacing.three,
+  },
+  shareChip: {
+    alignSelf: 'flex-start',
+    marginTop: Spacing.one,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: Spacing.half,
+    borderRadius: Spacing.three,
+  },
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    padding: Spacing.three,
+    borderRadius: Spacing.three,
+  },
+  switchRowInline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+  },
+  switchText: {
+    flex: 1,
+    gap: Spacing.half,
+  },
+  hint: {
+    fontSize: 12,
+    lineHeight: 16,
   },
   paymentCard: {
     alignItems: 'center',

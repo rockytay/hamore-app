@@ -21,6 +21,7 @@ import {
   findStudentAccount,
   isValidIsraeliId,
   LICENSE_CATEGORIES,
+  STUDENT_HAS_OTHER_TEACHER,
   StudentSaveError,
   TRANSMISSION_LABELS,
   useAddStudent,
@@ -125,6 +126,8 @@ export default function AddStudentScreen() {
           ...current,
           email: 'התלמיד כבר נמצא ברשימת התלמידים שלך',
         }));
+      } else if (found.hasOtherTeacher) {
+        setErrors((current) => ({ ...current, email: STUDENT_HAS_OTHER_TEACHER }));
       } else if (found.removedStudentId) {
         // Their history is kept on the former list: bring them back rather than add again.
         setFormerStudentId(found.removedStudentId);

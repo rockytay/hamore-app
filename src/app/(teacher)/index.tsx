@@ -6,12 +6,14 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { UpdatesFeed } from '@/components/updates-feed';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { useRefreshCalendarOnFocus } from '@/hooks/use-calendar-events';
 import { useCurrentUser } from '@/hooks/use-current-user';
 import { useUpdates } from '@/hooks/use-updates';
 
 export default function HomeScreen() {
   const user = useCurrentUser();
   const updates = useUpdates();
+  useRefreshCalendarOnFocus();
 
   return (
     <ThemedView style={styles.container}>

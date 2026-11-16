@@ -12,6 +12,7 @@ import {
   DAY_END_MIN,
   isLesson,
   useCalendarEvents,
+  useRefreshCalendarOnFocus,
   type CalendarEvent,
 } from '@/hooks/use-calendar-events';
 
@@ -51,6 +52,7 @@ export default function LessonsScreen() {
   const [weekOffset, setWeekOffset] = useState(0);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const { events, saveEvent, removeEvent, approve, studentApprove } = useCalendarEvents();
+  useRefreshCalendarOnFocus();
   const lessonDurationMin = useCurrentUser()?.lessonDurationMin ?? DEFAULT_DURATION_MIN;
 
   const days = getWeekDays(weekOffset);

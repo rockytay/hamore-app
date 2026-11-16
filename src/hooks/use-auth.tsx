@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
   type PropsWithChildren,
 } from 'react';
@@ -183,6 +184,12 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [authSession, setAuthSession] = useState<SupabaseSession | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  /**
+   * The role picked on the sign-in screen, while `signIn` checks it. Supabase reports the new
+   * session before that check, so without this the app would open the other role's screens for a
+   * moment, then sign out and show a fresh sign-in screen with no error.
+   */
+  const requiredRole = useRef<Role | null>(null);
 
   const loadProfile = useCallback(async (userId: string): Promise<Session | null> => {
     const { data, error } = await supabase
@@ -215,6 +222,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
     let cancelled = false;
     loadProfile(userId).then((loaded) => {
       if (cancelled) return;
+      // Wrong role for what was picked: `signIn` signs out and shows the error.
+      if (loaded && requiredRole.current && loaded.role !== requiredRole.current) return;
       setSession(loaded);
       setLoading(false);
     });
@@ -224,6 +233,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
   }, [userId, loadProfile]);
 
   const signIn: AuthContextValue['signIn'] = async (role, email, password) => {
+    // Stays set after a wrong-role attempt, so a late profile load cannot open the app.
+    requiredRole.current = role;
     const { data, error } = await supabase.auth.signInWithPassword({
       email: email.trim(),
       password,
@@ -239,11 +250,13 @@ export function AuthProvider({ children }: PropsWithChildren) {
       await supabase.auth.signOut();
       return `החשבון הזה רשום כ${ROLE_LABELS[loaded.role]}. יש לבחור "${ROLE_LABELS[loaded.role]}" ולנסות שוב.`;
     }
+    requiredRole.current = null;
     setSession(loaded);
     return null;
   };
 
   const signUp: AuthContextValue['signUp'] = async (input) => {
+    requiredRole.current = null;
     // The database creates the profile (and, for teachers, the organization and
     // default lesson types) from this metadata. See supabase/migrations.
     const { data, error } = await supabase.auth.signUp({

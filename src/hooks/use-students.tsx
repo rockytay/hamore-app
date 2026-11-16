@@ -39,6 +39,8 @@ export type LessonNote = {
   date: Date;
   /** What went well and what to improve in the next lesson. */
   text: string;
+  /** The teacher chose to show this note to the student in the student app. */
+  shared: boolean;
 };
 
 export type Student = {
@@ -137,6 +139,8 @@ export type StudentAccount = {
   alreadyAdded: boolean;
   /** The student is on this teacher's former list; bring them back instead of adding. */
   removedStudentId: string | null;
+  /** The student is on another teacher's list. A student has one teacher at a time. */
+  hasOtherTeacher: boolean;
 };
 
 type StudentAccountRow = {
@@ -146,6 +150,7 @@ type StudentAccountRow = {
   phone: string;
   already_added: boolean;
   removed_student_id: string | null;
+  has_other_teacher: boolean;
 };
 
 /**
@@ -167,6 +172,7 @@ export async function findStudentAccount(email: string): Promise<StudentAccount 
     phone: row.phone,
     alreadyAdded: row.already_added,
     removedStudentId: row.removed_student_id,
+    hasOtherTeacher: row.has_other_teacher,
   };
 }
 
@@ -205,7 +211,7 @@ export function isValidIsraeliId(id: string) {
   return sum % 10 === 0;
 }
 
-type LessonNoteRow = { id: string; body: string; created_at: string };
+type LessonNoteRow = { id: string; body: string; created_at: string; shared_with_student: boolean };
 
 type PaymentRow = { id: string; amount: number; method: PaymentMethod; paid_at: string; note: string };
 
@@ -234,12 +240,12 @@ type BalanceRow = {
   balance: number;
 };
 
-const STUDENT_COLUMNS =
-  '*, lesson_notes(id, body, created_at), payments(id, amount, method, paid_at, note)';
+const NOTE_COLUMNS = 'id, body, created_at, shared_with_student';
+const STUDENT_COLUMNS = `*, lesson_notes(${NOTE_COLUMNS}), payments(id, amount, method, paid_at, note)`;
 const PAYMENT_COLUMNS = 'id, amount, method, paid_at, note';
 
 function toNote(row: LessonNoteRow): LessonNote {
-  return { id: row.id, date: new Date(row.created_at), text: row.body };
+  return { id: row.id, date: new Date(row.created_at), text: row.body, shared: row.shared_with_student };
 }
 
 function toPayment(row: PaymentRow): Payment {
@@ -296,6 +302,10 @@ async function fetchBalances() {
   return error ? null : data;
 }
 
+/** A student has one teacher at a time (see supabase/migrations). */
+export const STUDENT_HAS_OTHER_TEACHER =
+  'התלמיד רשום כרגע אצל מורה אחר. תלמיד יכול להיות אצל מורה אחד בלבד בכל פעם.';
+
 /** Thrown by addStudent with a message in Hebrew that can be shown as-is. */
 export class StudentSaveError extends Error {
   constructor(
@@ -317,7 +327,11 @@ type StudentsContextValue = {
   /** Re-reads balances and lesson counts, e.g. after a lesson changed. */
   refreshBalances: () => Promise<void>;
   /** Returns an error message in Hebrew, or null on success. */
-  addLessonNote: (studentId: string, text: string) => Promise<string | null>;
+  addLessonNote: (studentId: string, text: string, shared?: boolean) => Promise<string | null>;
+  /** Shows or hides a note in the student app. Returns an error in Hebrew, or null. */
+  setNoteShared: (studentId: string, noteId: string, shared: boolean) => Promise<string | null>;
+  /** Marks whether the student passed the theory test. Returns an error in Hebrew, or null. */
+  setTheoryPassed: (studentId: string, passed: boolean) => Promise<string | null>;
   /** Returns an error message in Hebrew, or null on success. */
   addPayment: (studentId: string, payment: NewPayment) => Promise<string | null>;
   /** Saves the student and returns it. Throws StudentSaveError. */
@@ -417,6 +431,8 @@ export function StudentsProvider({ children }: PropsWithChildren) {
             'email'
           );
         }
+        case 'HM005':
+          throw new StudentSaveError(STUDENT_HAS_OTHER_TEACHER, 'email');
         // The database only accepts existing student accounts (see supabase/migrations).
         case 'HM001':
         case 'HM002':
@@ -434,7 +450,7 @@ export function StudentsProvider({ children }: PropsWithChildren) {
       const note = await supabase
         .from('lesson_notes')
         .insert({ student_id: data.id, body: firstNote })
-        .select('id, body, created_at')
+        .select(NOTE_COLUMNS)
         .single<LessonNoteRow>();
       // The student is saved either way; a failed first note is not worth blocking on.
       if (note.data) notes = [note.data];
@@ -446,11 +462,11 @@ export function StudentsProvider({ children }: PropsWithChildren) {
     return student;
   };
 
-  const addLessonNote = async (studentId: string, text: string): Promise<string | null> => {
+  const addLessonNote = async (studentId: string, text: string, shared = false): Promise<string | null> => {
     const { data, error: insertError } = await supabase
       .from('lesson_notes')
-      .insert({ student_id: studentId, body: text })
-      .select('id, body, created_at')
+      .insert({ student_id: studentId, body: text, shared_with_student: shared })
+      .select(NOTE_COLUMNS)
       .single<LessonNoteRow>();
     if (insertError || !data) return 'שמירת ההערה נכשלה. יש לנסות שוב.';
 
@@ -461,6 +477,37 @@ export function StudentsProvider({ children }: PropsWithChildren) {
           ? { ...student, lessonNotes: [note, ...student.lessonNotes] }
           : student
       )
+    );
+    return null;
+  };
+
+  const setNoteShared = async (studentId: string, noteId: string, shared: boolean) => {
+    const { error: updateError } = await supabase
+      .from('lesson_notes')
+      .update({ shared_with_student: shared })
+      .eq('id', noteId);
+    if (updateError) return 'עדכון ההערה נכשל. יש לנסות שוב.';
+    setStudents((current) =>
+      current.map((student) =>
+        student.id === studentId
+          ? {
+              ...student,
+              lessonNotes: student.lessonNotes.map((note) => (note.id === noteId ? { ...note, shared } : note)),
+            }
+          : student
+      )
+    );
+    return null;
+  };
+
+  const setTheoryPassed = async (studentId: string, passed: boolean) => {
+    const { error: updateError } = await supabase
+      .from('students')
+      .update({ theory_passed: passed })
+      .eq('id', studentId);
+    if (updateError) return 'העדכון נכשל. יש לנסות שוב.';
+    setStudents((current) =>
+      current.map((student) => (student.id === studentId ? { ...student, theoryPassed: passed } : student))
     );
     return null;
   };
@@ -495,22 +542,25 @@ export function StudentsProvider({ children }: PropsWithChildren) {
         removal_note: removal?.note ?? '',
       })
       .eq('id', studentId);
-    if (updateError) return false;
+    if (updateError) return updateError.code ?? 'error';
     setStudents((current) =>
       current.map((student) => (student.id === studentId ? { ...student, removal } : student))
     );
-    return true;
+    return null;
   };
 
   // The database cancels the student's upcoming lessons; the calendar reloads them.
   const removeStudent = async (studentId: string, reason: RemovalReason, note = '') => {
-    const saved = await setRemoval(studentId, { removedAt: new Date(), reason, note: note.trim() });
-    return saved ? null : 'הסרת התלמיד נכשלה. יש לנסות שוב.';
+    const failed = await setRemoval(studentId, { removedAt: new Date(), reason, note: note.trim() });
+    return failed ? 'הסרת התלמיד נכשלה. יש לנסות שוב.' : null;
   };
 
   const restoreStudent = async (studentId: string) => {
-    const saved = await setRemoval(studentId, undefined);
-    return saved ? null : 'החזרת התלמיד נכשלה. יש לנסות שוב.';
+    const failed = await setRemoval(studentId, undefined);
+    if (!failed) return null;
+    // A former student who has since joined another teacher can't be brought back.
+    if (failed === 'HM005' || failed === '23505') return STUDENT_HAS_OTHER_TEACHER;
+    return 'החזרת התלמיד נכשלה. יש לנסות שוב.';
   };
 
   return (
@@ -522,6 +572,8 @@ export function StudentsProvider({ children }: PropsWithChildren) {
         reload,
         refreshBalances,
         addLessonNote,
+        setNoteShared,
+        setTheoryPassed,
         addPayment,
         addStudent,
         removeStudent,
@@ -585,6 +637,16 @@ export function useRestoreStudent() {
 /** Add a lesson note (newest first) to a student's profile. Returns an error in Hebrew, or null. */
 export function useAddLessonNote() {
   return useStudentsContext().addLessonNote;
+}
+
+/** Show or hide a lesson note in the student app. Returns an error in Hebrew, or null. */
+export function useSetNoteShared() {
+  return useStudentsContext().setNoteShared;
+}
+
+/** Mark whether a student passed the theory test. Returns an error in Hebrew, or null. */
+export function useSetTheoryPassed() {
+  return useStudentsContext().setTheoryPassed;
 }
 
 /** Record a payment from a student. Returns an error in Hebrew, or null. */
