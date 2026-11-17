@@ -1,11 +1,14 @@
-import { ActivityIndicator, StyleSheet } from 'react-native';
+import { useState } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 
 import { ChoiceChips, optionsOf } from '@/components/form-ui';
-import { Card, EmptyText, ProgressBar, Section } from '@/components/student-ui';
+import { Card, EmptyText, ProgressBar, Section, studentStyles } from '@/components/student-ui';
 import { TeacherFileScreen } from '@/components/teacher-file-screen';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import {
+  formatChapter,
+  groupTasksByStage,
   MIN_LESSONS_B,
   SPECIAL_LESSON_LABELS,
   TASK_STAGE_LABELS,
@@ -29,6 +32,7 @@ function Tasks({ student }: { student: Student }) {
   const { tasks, failed } = useDrivingTasks();
   const { setTaskStatus } = useStudentFileActions();
   const { events } = useCalendarEvents();
+  const [open, setOpen] = useState<number | null>(null);
   const readOnly = !!student.removal;
 
   const specialCounts = (Object.keys(SPECIAL_LESSON_LABELS) as SpecialLessonKind[]).map((kind) => ({
@@ -42,8 +46,9 @@ function Tasks({ student }: { student: Student }) {
     if (error) showMessage('שגיאה', error);
   };
 
-  const stages = new Map<number, DrivingTask[]>();
-  for (const task of tasks ?? []) stages.set(task.stage, [...(stages.get(task.stage) ?? []), task]);
+  const stages = groupTasksByStage(tasks ?? [], student.taskProgress);
+  const mastered = stages.reduce((sum, s) => sum + s.mastered, 0);
+  const relevant = stages.reduce((sum, s) => sum + s.relevant, 0);
 
   return (
     <>
@@ -66,36 +71,84 @@ function Tasks({ student }: { student: Student }) {
       {tasks?.length === 0 && (
         <Card>
           <ThemedText type="smallBold">רשימת המשימות עדיין לא נטענה למערכת</ThemedText>
-          <EmptyText>
-            52 המשימות של כרטיס התלמיד (4 שלבים) יתווספו ברגע שתתקבל הרשימה הרשמית של משרד התחבורה.
-          </EmptyText>
+          <EmptyText>יש להריץ את עדכון מסד הנתונים של משימות הנהיגה.</EmptyText>
         </Card>
       )}
 
-      {[...stages.entries()].map(([stage, stageTasks]) => {
-        const mastered = stageTasks.filter((task) => student.taskProgress[task.id] === 'mastered').length;
-        return (
-          <Section key={stage} title={`${TASK_STAGE_LABELS[stage] ?? `שלב ${stage}`} · ${mastered}/${stageTasks.length} בשליטה`}>
-            {stageTasks.map((task) => (
-              <Card key={task.id} style={styles.task}>
-                <ThemedText type="small">{task.title}</ThemedText>
-                <ChoiceChips
-                  options={STATUS_OPTIONS}
-                  value={student.taskProgress[task.id] ?? 'not_started'}
-                  onChange={(status) => !readOnly && status && change(task.id, status)}
-                />
-              </Card>
-            ))}
-          </Section>
-        );
-      })}
+      {stages.length > 0 && (
+        <Section title={`כרטיס משימות · ${mastered}/${relevant} בשליטה`}>
+          {student.transmission === 'automatic' && (
+            <EmptyText>
+              התלמיד/ה לומד/ת על אוטומט: משימות שקשורות למצמד ולהחלפת הילוכים אפשר לסמן כ„לא רלוונטי״, והן לא
+              ייספרו בהתקדמות.
+            </EmptyText>
+          )}
+          {stages.map(({ stage, tasks: stageTasks, mastered: stageMastered, relevant: stageRelevant }) => (
+            <Card key={stage} style={styles.stage}>
+              <Pressable
+                onPress={() => setOpen(open === stage ? null : stage)}
+                accessibilityRole="button"
+                accessibilityState={{ expanded: open === stage }}
+                style={styles.stageHeader}>
+                <View style={studentStyles.row}>
+                  <ThemedText type="smallBold" style={studentStyles.flex}>
+                    {TASK_STAGE_LABELS[stage] ?? `שלב ${stage}`}
+                  </ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    {stageMastered}/{stageRelevant} {open === stage ? '▲' : '▼'}
+                  </ThemedText>
+                </View>
+                <ProgressBar value={stageRelevant ? stageMastered / stageRelevant : 1} />
+              </Pressable>
+              {open === stage &&
+                groupByChapter(stageTasks).map(([chapter, chapterTasks]) => (
+                  <View key={chapter} style={styles.chapter}>
+                    <ThemedText type="small" themeColor="textSecondary">
+                      {formatChapter(chapter)}
+                    </ThemedText>
+                    {chapterTasks.map((task) => (
+                      <View key={task.id} style={styles.task}>
+                        <ThemedText type="small">
+                          <ThemedText type="small" themeColor="textSecondary">
+                            {task.code}{' '}
+                          </ThemedText>
+                          {task.title}
+                        </ThemedText>
+                        <ChoiceChips
+                          options={STATUS_OPTIONS}
+                          value={student.taskProgress[task.id] ?? 'not_started'}
+                          onChange={(status) => !readOnly && status && change(task.id, status)}
+                        />
+                      </View>
+                    ))}
+                  </View>
+                ))}
+            </Card>
+          ))}
+        </Section>
+      )}
     </>
   );
+}
+
+function groupByChapter(tasks: DrivingTask[]) {
+  const chapters = new Map<number, DrivingTask[]>();
+  for (const task of tasks) chapters.set(task.chapter, [...(chapters.get(task.chapter) ?? []), task]);
+  return [...chapters.entries()];
 }
 
 const styles = StyleSheet.create({
   summary: {
     gap: Spacing.two,
+  },
+  stage: {
+    gap: Spacing.three,
+  },
+  stageHeader: {
+    gap: Spacing.two,
+  },
+  chapter: {
+    gap: Spacing.three,
   },
   task: {
     gap: Spacing.two,

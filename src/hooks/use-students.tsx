@@ -16,6 +16,8 @@ import {
   toFileColumns,
   toTest,
   toTestColumns,
+  type Address,
+  type Contact,
   type FileRow,
   type StudentFile,
   type StudentPersonal,
@@ -24,7 +26,13 @@ import {
   type TaskStatus,
   type TestRow,
 } from '@/hooks/student-file';
-import { PERSONAL_COLUMNS, toPersonal, type PersonalRow } from '@/hooks/student-personal';
+import {
+  PERSONAL_COLUMNS,
+  saveAddress,
+  saveContact,
+  toPersonal,
+  type PersonalRow,
+} from '@/hooks/student-personal';
 import { supabase } from '@/lib/supabase';
 
 /** Israeli driving licence categories. */
@@ -167,6 +175,12 @@ export type NewStudent = Omit<
   profileId: string;
   /** Optional first note, e.g. the student's driving experience so far. */
   firstNote?: string;
+  /** The teacher's file at the start: green form, theory date, payment plan... */
+  file?: Partial<StudentFile>;
+  /** Pickup address, when the student did not enter one at sign-up. */
+  address?: Omit<Address, 'id'>;
+  /** Parent contact, when the student is under 18 and did not enter one. */
+  parent?: Omit<Contact, 'id'>;
 };
 
 /** A student account found by email, before the teacher adds it to their list. */
@@ -181,6 +195,15 @@ export type StudentAccount = {
   removedStudentId: string | null;
   /** The student is on another teacher's list. A student has one teacher at a time. */
   hasOtherTeacher: boolean;
+  /**
+   * Which required details the student already entered on their account. Only yes/no:
+   * the details themselves become visible once the student is on the teacher's list.
+   */
+  hasIdNumber: boolean;
+  hasBirthDate: boolean;
+  isMinor: boolean;
+  hasAddress: boolean;
+  hasParent: boolean;
 };
 
 type StudentAccountRow = {
@@ -191,6 +214,12 @@ type StudentAccountRow = {
   already_added: boolean;
   removed_student_id: string | null;
   has_other_teacher: boolean;
+  // Missing on a database without the 20261120 update.
+  has_id_number?: boolean;
+  has_birth_date?: boolean;
+  is_minor?: boolean;
+  has_address?: boolean;
+  has_parent?: boolean;
 };
 
 /**
@@ -213,6 +242,11 @@ export async function findStudentAccount(email: string): Promise<StudentAccount 
     alreadyAdded: row.already_added,
     removedStudentId: row.removed_student_id,
     hasOtherTeacher: row.has_other_teacher,
+    hasIdNumber: row.has_id_number ?? false,
+    hasBirthDate: row.has_birth_date ?? false,
+    isMinor: row.is_minor ?? false,
+    hasAddress: row.has_address ?? false,
+    hasParent: row.has_parent ?? false,
   };
 }
 
@@ -475,7 +509,7 @@ export function StudentsProvider({ children }: PropsWithChildren) {
     };
   }, [teacherId, applyResult]);
 
-  const addStudent = async ({ firstNote, ...input }: NewStudent): Promise<Student> => {
+  const addStudent = async ({ firstNote, file, address, parent, ...input }: NewStudent): Promise<Student> => {
     const { data, error: insertError } = await supabase
       .from('students')
       .insert({
@@ -487,6 +521,7 @@ export function StudentsProvider({ children }: PropsWithChildren) {
         theory_passed: input.theoryPassed ?? false,
         prior_lessons: input.lessonsCompleted,
         opening_balance: input.balance,
+        ...toFileColumns(file ?? {}),
       })
       .select(STUDENT_COLUMNS)
       .single<StudentRow>();
@@ -532,8 +567,17 @@ export function StudentsProvider({ children }: PropsWithChildren) {
       if (note.data) notes = [note.data];
     }
 
+    // Details the student did not enter themselves. They go on the student's account, which
+    // the teacher may write to now that the student is on their list. The student is saved
+    // either way; a missing detail shows up as an alert on the student's page.
+    let personalSaved = false;
+    if (address) personalSaved = (await saveAddress(input.profileId, address)) === null || personalSaved;
+    if (parent) personalSaved = (await saveContact(input.profileId, parent)) === null || personalSaved;
+    const reloaded = personalSaved ? await fetchStudent(data.id) : null;
+
     // A new student has no lessons or payments yet, so the opening values are the balance.
-    const student = toStudent({ ...data, lesson_notes: notes });
+    // (Reloading also brings the first note, which was saved above.)
+    const student = reloaded ?? toStudent({ ...data, lesson_notes: notes });
     setStudents((current) => [student, ...current]);
     return student;
   };

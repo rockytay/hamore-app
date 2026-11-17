@@ -13,6 +13,7 @@ import {
   getAppealDeadline,
   getEligibility,
   getStage,
+  groupTasksByStage,
   MIN_LESSONS_B,
   SPECIAL_LESSON_LABELS,
   STAGE_LABELS,
@@ -20,7 +21,6 @@ import {
   TASK_STATUS_LABELS,
   TEST_KIND_LABELS,
   TEST_RESULT_LABELS,
-  type DrivingTask,
   type SpecialLessonKind,
   type StudentTest,
 } from '@/hooks/student-file';
@@ -218,25 +218,27 @@ function TasksSection() {
   const [open, setOpen] = useState<number | null>(null);
   if (!tasks || tasks.length === 0) return null;
 
-  const stages = new Map<number, DrivingTask[]>();
-  for (const task of tasks) stages.set(task.stage, [...(stages.get(task.stage) ?? []), task]);
+  const stages = groupTasksByStage(tasks, taskProgress);
 
   return (
     <Section title="כרטיס משימות">
-      {[...stages.entries()].map(([stage, stageTasks]) => {
-        const mastered = stageTasks.filter((task) => taskProgress[task.id] === 'mastered').length;
+      {stages.map(({ stage, tasks: stageTasks, mastered, relevant }) => {
         return (
-          <Pressable key={stage} onPress={() => setOpen(open === stage ? null : stage)}>
+          <Pressable
+            key={stage}
+            onPress={() => setOpen(open === stage ? null : stage)}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: open === stage }}>
             <Card style={styles.stage}>
               <View style={studentStyles.row}>
                 <ThemedText type="smallBold" style={studentStyles.flex}>
                   {TASK_STAGE_LABELS[stage] ?? `שלב ${stage}`}
                 </ThemedText>
                 <ThemedText type="small" themeColor="textSecondary">
-                  {mastered}/{stageTasks.length}
+                  {mastered}/{relevant}
                 </ThemedText>
               </View>
-              <ProgressBar value={mastered / stageTasks.length} />
+              <ProgressBar value={relevant ? mastered / relevant : 1} />
               {open === stage &&
                 stageTasks.map((task) => (
                   <View key={task.id} style={studentStyles.row}>

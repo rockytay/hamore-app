@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet } from 'react-native';
 
-import { ChoiceChips, DateField, FieldHint, FieldLabel, optionsOf } from '@/components/form-ui';
+import { ChoiceChips, DateField, FieldHint, FieldLabel, optionsOf, TextField } from '@/components/form-ui';
 import { PersonalDetailsEditor } from '@/components/personal-details-editor';
 import { Button, Card, EmptyText, Section } from '@/components/student-ui';
 import { ThemedView } from '@/components/themed-view';
@@ -15,6 +15,7 @@ import {
 import { updateMyProfile, type ProfileChanges } from '@/hooks/student-personal';
 import { useSession } from '@/hooks/use-auth';
 import { useStudentPortal } from '@/hooks/use-student-portal';
+import { isValidIsraeliId } from '@/hooks/use-students';
 import { showMessage } from '@/utils/dialogs';
 
 const REMINDER_HOURS = [1, 2, 3, 12, 24, 48];
@@ -49,6 +50,7 @@ function BasicDetails({ personal, onSaved }: { personal: StudentPersonal; onSave
   const session = useSession();
   const [draft, setDraft] = useState<Required<ProfileChanges>>({
     birthDate: personal.birthDate,
+    idNumber: personal.idNumber ?? '',
     language: personal.language,
     reminderChannel: personal.reminderChannel,
     reminderHoursBefore: personal.reminderHoursBefore,
@@ -61,6 +63,9 @@ function BasicDetails({ personal, onSaved }: { personal: StudentPersonal; onSave
     if (!session) return;
     if (draft.birthDate && (draft.birthDate > new Date() || getAge(draft.birthDate) > 100)) {
       return setError('תאריך הלידה אינו תקין.');
+    }
+    if (!draft.idNumber || !isValidIsraeliId(draft.idNumber)) {
+      return setError('יש להזין מספר תעודת זהות תקין.');
     }
     setError(null);
     setBusy(true);
@@ -79,6 +84,13 @@ function BasicDetails({ personal, onSaved }: { personal: StudentPersonal; onSave
           value={draft.birthDate}
           onChange={(birthDate) => change({ birthDate })}
           hint="קובע ממתי אפשר להתחיל תאוריה, שיעורים וטסט"
+        />
+        <TextField
+          label="מספר תעודת זהות"
+          value={draft.idNumber ?? ''}
+          onChange={(text) => change({ idNumber: text.replace(/\D/g, '').slice(0, 9) })}
+          keyboardType="number-pad"
+          hint="נדרש לרישום לטסט. גלוי רק לך ולמורה שלך."
         />
         <FieldLabel>שפה מועדפת</FieldLabel>
         <ChoiceChips

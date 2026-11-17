@@ -48,6 +48,9 @@ export function StudentFileSummary({ student }: { student: Student }) {
         tests,
         birthDate: personal?.birthDate ?? null,
         contacts: personal?.contacts ?? [],
+        // Former students who deleted their account have no personal details to ask for.
+        hasAddress: !personal || personal.addresses.length > 0,
+        hasIdNumber: !!student.idNumber,
         licenseCategory: student.licenseCategory,
         lessonsCompleted: student.lessonsCompleted,
         validity: teacher?.validity ?? DEFAULT_VALIDITY,

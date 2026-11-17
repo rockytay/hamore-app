@@ -10,8 +10,8 @@ function load() {
   cache ??= Promise.resolve(
     supabase
       .from('driving_tasks')
-      .select('id, stage, title')
-      .order('stage')
+      .select('id, stage, chapter, code, title')
+      .eq('license_category', 'B')
       .order('sort_order')
       .returns<DrivingTask[]>()
   ).then(({ data, error }) => {

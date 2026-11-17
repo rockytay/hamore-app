@@ -18,8 +18,7 @@ insert into auth.users (id, email, raw_user_meta_data) values
    '{"role":"student","first_name":"יוסי","last_name":"לוי","phone":"0502345678",
      "birth_date":"2009-02-31","preferred_language":"xx"}');
 
--- One driving task, as the later migration with the official list will add.
-insert into public.driving_tasks (id, stage, sort_order, title) values (1, 1, 1, 'התנעה ויציאה לדרך');
+-- Task 1 ("כניסה לרכב ויציאה ממנו") comes from the driving tasks migration.
 
 select set_config('test.slot_start', (date_trunc('day', now()) + interval '2 days 8 hours')::text, true);
 select set_config('test.slot_end', (date_trunc('day', now()) + interval '2 days 12 hours')::text, true);

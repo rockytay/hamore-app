@@ -62,6 +62,8 @@ export type StudentPersonal = {
   profileId: string;
   email: string;
   birthDate: Date | null;
+  /** The ID number the student entered on their account. Required at sign-up. */
+  idNumber: string | null;
   language: Language;
   reminderChannel: ReminderChannel;
   reminderHoursBefore: number;
@@ -287,25 +289,50 @@ export function toTestColumns(test: Omit<StudentTest, 'id'>) {
   };
 }
 
-export type DrivingTask = { id: number; stage: number; title: string };
+/** One of the official "כרטיס תלמיד" tasks. `code` is stage.chapter.task, for example 1.3.5. */
+export type DrivingTask = { id: number; stage: number; chapter: number; code: string; title: string };
 
-export type TaskStatus = 'not_started' | 'practicing' | 'mastered';
+export type TaskStatus = 'not_started' | 'practicing' | 'mastered' | 'not_relevant';
 
 export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
   not_started: 'לא תורגל',
   practicing: 'בתרגול',
   mastered: 'שולט',
+  not_relevant: 'לא רלוונטי',
 };
 
 export const TASK_STAGE_LABELS: Record<number, string> = {
-  1: 'שלב 1',
-  2: 'שלב 2',
-  3: 'שלב 3',
-  4: 'שלב 4',
+  1: 'שלב א · תפעול הרכב',
+  2: 'שלב ב · הדרך',
+  3: 'שלב ג · התנועה',
+  4: 'שלב ד · משימות נהיגה מיוחדות',
 };
+
+const HEBREW_ORDINALS = ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ז', 'ח', 'ט'];
+
+export function formatChapter(chapter: number) {
+  return `פרק ${HEBREW_ORDINALS[chapter - 1] ?? chapter}`;
+}
 
 /** Task id → status. Tasks that are missing are not practised yet. */
 export type TaskProgress = Record<number, Exclude<TaskStatus, 'not_started'>>;
+
+export type StageTasks = { stage: number; tasks: DrivingTask[]; mastered: number; relevant: number };
+
+/**
+ * The tasks grouped by stage, with how many are mastered out of those that apply to this
+ * student (tasks marked "not relevant", such as clutch tasks in an automatic, don't count).
+ */
+export function groupTasksByStage(tasks: DrivingTask[], progress: TaskProgress): StageTasks[] {
+  const stages = new Map<number, DrivingTask[]>();
+  for (const task of tasks) stages.set(task.stage, [...(stages.get(task.stage) ?? []), task]);
+  return [...stages.entries()].map(([stage, stageTasks]) => ({
+    stage,
+    tasks: stageTasks,
+    mastered: stageTasks.filter((task) => progress[task.id] === 'mastered').length,
+    relevant: stageTasks.filter((task) => progress[task.id] !== 'not_relevant').length,
+  }));
+}
 
 export type SpecialLessonKind = 'night' | 'highway' | 'rain';
 
@@ -440,8 +467,9 @@ export function getNavigationUrl(address: Address) {
 // ---------------------------------------------------------------------------
 
 /**
- * Age rules for a private car (licence B), in months, from the research of November 2026.
- * TODO: confirm with the Ministry of Transport rules before relying on them.
+ * Age rules for a private car (licence B), in months. Verified 17.11.2026 against the
+ * Ministry of Education (traffic education) and gov.il: theory 15y6m, lessons 16y6m,
+ * practical test and licence 16y9m (older sources saying 17 are out of date).
  */
 export const AGE_RULES_B = {
   theoryMonths: 15 * 12 + 6,
@@ -492,7 +520,8 @@ export function getStage(file: StudentFile, tests: StudentTest[], now = new Date
 
 export type ValiditySettings = { greenFormValidYears: number; theoryValidYears: number };
 
-export const DEFAULT_VALIDITY: ValiditySettings = { greenFormValidYears: 3, theoryValidYears: 5 };
+/** gov.il: the medical declaration (green form) and a passed theory test are both valid 5 years. */
+export const DEFAULT_VALIDITY: ValiditySettings = { greenFormValidYears: 5, theoryValidYears: 5 };
 
 export type FileAlert = {
   id: string;
@@ -506,6 +535,9 @@ export type AlertInput = {
   tests: StudentTest[];
   birthDate: Date | null;
   contacts: Contact[];
+  /** The student has a default pickup address. */
+  hasAddress: boolean;
+  hasIdNumber: boolean;
   licenseCategory: LicenseCategory;
   lessonsCompleted: number;
   validity: ValiditySettings;
@@ -515,7 +547,8 @@ export type AlertInput = {
 
 /** Expiry dates, missing details and upcoming tests that need attention. */
 export function getFileAlerts(input: AlertInput, now = new Date()): FileAlert[] {
-  const { file, tests, birthDate, contacts, licenseCategory, lessonsCompleted, validity, audience } = input;
+  const { file, tests, birthDate, contacts, hasAddress, hasIdNumber, licenseCategory, lessonsCompleted, validity, audience } =
+    input;
   const forStudent = audience === 'student';
   const alerts: FileAlert[] = [];
 
@@ -563,6 +596,24 @@ export function getFileAlerts(input: AlertInput, now = new Date()): FileAlert[] 
       body: forStudent
         ? 'מתחת לגיל 18 צריך להוסיף פרטי הורה. אפשר להוסיף בלשונית הפרופיל.'
         : 'התלמיד/ה מתחת לגיל 18. יש להוסיף פרטי הורה.',
+    });
+  }
+  if (!hasIdNumber) {
+    alerts.push({
+      id: 'id-number-missing',
+      tone: 'action',
+      title: 'חסר מספר תעודת זהות',
+      body: forStudent
+        ? 'נדרש לרישום לטסט. אפשר להוסיף בלשונית הפרופיל.'
+        : 'נדרש לרישום לטסט במשרד התחבורה.',
+    });
+  }
+  if (!hasAddress) {
+    alerts.push({
+      id: 'address-missing',
+      tone: 'action',
+      title: 'חסרה כתובת איסוף',
+      body: forStudent ? 'כדי שהמורה ידע מאיפה לאסוף אותך. אפשר להוסיף בלשונית הפרופיל.' : 'אפשר להוסיף בפרטים האישיים.',
     });
   }
   if (!birthDate && !forStudent) {

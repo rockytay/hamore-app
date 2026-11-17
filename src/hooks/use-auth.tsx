@@ -58,6 +58,12 @@ export type SignUpInput = {
   /** Students only: agreed that their details are kept (privacy law). Required. */
   privacyConsent?: boolean;
   marketingConsent?: boolean;
+  /** Students only: required. Copied into the teacher's file when the teacher adds them. */
+  idNumber?: string;
+  /** Students only: the default pickup address. Required. */
+  address?: { street: string; houseNumber: string; city: string; pickupNotes: string };
+  /** Students under 18 only: a parent to contact. Required for them. */
+  parent?: { name: string; phone: string; relation: string };
 };
 
 /** Created by `npm run seed:dev`; the sign-in screen offers them in development builds. */
@@ -114,7 +120,7 @@ function toSession(row: ProfileRow): Session {
       lessonDurationMin: row.lesson_duration_min,
       settings: { debtWarnings: row.debt_warnings, lessonReminders: row.lesson_reminders },
       validity: {
-        greenFormValidYears: row.green_form_valid_years ?? 3,
+        greenFormValidYears: row.green_form_valid_years ?? 5,
         theoryValidYears: row.theory_valid_years ?? 5,
       },
       subscription: {
@@ -178,7 +184,12 @@ function translateAuthError(error: { message: string; code?: string }): string {
     return 'כבר קיים חשבון עם כתובת האימייל הזו.';
   }
   if (text.includes('email not confirmed')) return 'יש לאשר את כתובת האימייל לפני ההתחברות.';
-  if (text.includes('password')) return 'הסיסמה חלשה מדי. יש לבחור סיסמה ארוכה יותר.';
+  if (code === 'weak_password' && text.includes('pwned')) {
+    return 'הסיסמה הזו הופיעה בדליפות מידע מאתרים אחרים. יש לבחור סיסמה אחרת.';
+  }
+  if (code === 'weak_password' || text.includes('password')) {
+    return 'הסיסמה חלשה מדי. יש לבחור לפחות 8 תווים עם אותיות וספרות.';
+  }
   if (text.includes('network') || text.includes('fetch')) return 'אין חיבור לשרת. יש לבדוק את החיבור לאינטרנט.';
   return 'אירעה שגיאה. יש לנסות שוב.';
 }
@@ -306,6 +317,14 @@ export function AuthProvider({ children }: PropsWithChildren) {
           preferred_language: input.preferredLanguage ?? 'he',
           privacy_consent: input.privacyConsent ? 'true' : 'false',
           marketing_consent: input.marketingConsent ? 'true' : 'false',
+          id_number: input.idNumber ?? '',
+          address_street: input.address?.street.trim() ?? '',
+          address_house_number: input.address?.houseNumber.trim() ?? '',
+          address_city: input.address?.city.trim() ?? '',
+          address_pickup_notes: input.address?.pickupNotes.trim() ?? '',
+          parent_name: input.parent?.name.trim() ?? '',
+          parent_phone: input.parent?.phone.trim() ?? '',
+          parent_relation: input.parent?.relation.trim() ?? '',
         },
       },
     });

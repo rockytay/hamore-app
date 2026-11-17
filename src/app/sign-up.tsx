@@ -16,15 +16,24 @@ import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { getAge, LANGUAGE_LABELS, parseTypedDate, type Language } from '@/hooks/student-file';
 import { useAuth, type Role, type SignUpInput } from '@/hooks/use-auth';
-import { formatPhone, isValidPhone } from '@/hooks/use-students';
+import { formatPhone, isValidIsraeliId, isValidPhone } from '@/hooks/use-students';
+import { getPasswordChecks, MIN_PASSWORD_LENGTH, validatePassword } from '@/utils/password';
 
 const styles = StyleSheet.create({
   group: {
     gap: Spacing.two,
   },
+  wide: {
+    flex: 2,
+  },
+  checks: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    columnGap: Spacing.three,
+    marginTop: -Spacing.one,
+  },
 });
 
-const MIN_PASSWORD_LENGTH = 6;
 
 type Draft = Pick<SignUpInput, 'firstName' | 'lastName' | 'phone' | 'email' | 'password'> & {
   driverLicenseNumber: string;
@@ -35,6 +44,14 @@ type Draft = Pick<SignUpInput, 'firstName' | 'lastName' | 'phone' | 'email' | 'p
   language: Language;
   privacyConsent: boolean;
   marketingConsent: boolean;
+  idNumber: string;
+  street: string;
+  houseNumber: string;
+  city: string;
+  pickupNotes: string;
+  parentName: string;
+  parentPhone: string;
+  parentRelation: string;
 };
 
 const EMPTY_DRAFT: Draft = {
@@ -50,7 +67,21 @@ const EMPTY_DRAFT: Draft = {
   language: 'he',
   privacyConsent: false,
   marketingConsent: false,
+  idNumber: '',
+  street: '',
+  houseNumber: '',
+  city: '',
+  pickupNotes: '',
+  parentName: '',
+  parentPhone: '',
+  parentRelation: '',
 };
+
+/** Under 18 a parent contact is required (from the typed birth date, once it is complete). */
+function isMinor(birthDate: string) {
+  const born = parseTypedDate(birthDate);
+  return born !== null && getAge(born) < 18;
+}
 
 /** Students younger than this can't start anything yet; older than this is a typo. */
 const MIN_STUDENT_AGE = 14;
@@ -64,6 +95,15 @@ function validate(draft: Draft, role: Role) {
     if (!born) return 'יש להזין תאריך לידה תקין (DD/MM/YYYY).';
     const age = getAge(born);
     if (age < MIN_STUDENT_AGE || age > MAX_STUDENT_AGE) return 'תאריך הלידה אינו נראה תקין.';
+    if (!isValidIsraeliId(draft.idNumber)) return 'יש להזין מספר תעודת זהות תקין (9 ספרות).';
+    if (!draft.street.trim() || !draft.houseNumber.trim() || !draft.city.trim()) {
+      return 'יש למלא כתובת איסוף: רחוב, מספר בית ועיר.';
+    }
+    if (age < 18) {
+      if (!draft.parentName.trim()) return 'מתחת לגיל 18 יש למלא את שם ההורה.';
+      if (!isValidPhone(draft.parentPhone)) return 'יש להזין מספר נייד תקין של ההורה (05X-XXXXXXX).';
+      if (!draft.parentRelation.trim()) return 'יש לציין את הקרבה של ההורה (אמא, אבא...).';
+    }
   }
   if (role === 'teacher' && !draft.driverLicenseNumber) {
     return 'יש להזין מספר רישיון נהיגה, כדי שנוכל לאמת שאתם מורים לנהיגה.';
@@ -73,9 +113,13 @@ function validate(draft: Draft, role: Role) {
   }
   if (!isValidPhone(draft.phone)) return 'יש להזין מספר נייד תקין (05X-XXXXXXX).';
   if (!/^\S+@\S+\.\S+$/.test(draft.email.trim())) return 'כתובת האימייל אינה תקינה.';
-  if (draft.password.length < MIN_PASSWORD_LENGTH) {
-    return `הסיסמה צריכה להכיל לפחות ${MIN_PASSWORD_LENGTH} תווים.`;
-  }
+  const passwordError = validatePassword(draft.password, {
+    email: draft.email,
+    phone: draft.phone,
+    firstName: draft.firstName,
+    lastName: draft.lastName,
+  });
+  if (passwordError) return passwordError;
   if (draft.password !== draft.confirmPassword) return 'הסיסמאות אינן תואמות.';
   if (role === 'student' && !draft.privacyConsent) {
     return 'יש לאשר את שמירת הפרטים כדי ליצור חשבון.';
@@ -118,6 +162,16 @@ export default function SignUpScreen() {
         preferredLanguage: draft.language,
         privacyConsent: draft.privacyConsent,
         marketingConsent: draft.marketingConsent,
+        idNumber: draft.idNumber,
+        address: {
+          street: draft.street,
+          houseNumber: draft.houseNumber,
+          city: draft.city,
+          pickupNotes: draft.pickupNotes,
+        },
+        parent: isMinor(draft.birthDate)
+          ? { name: draft.parentName, phone: formatPhone(draft.parentPhone), relation: draft.parentRelation }
+          : undefined,
       }),
     });
     setBusy(false);
@@ -187,6 +241,76 @@ export default function SignUpScreen() {
               keyboardType="numbers-and-punctuation"
               autoComplete="birthdate-full"
             />
+            <FormField
+              label="מספר תעודת זהות"
+              value={draft.idNumber}
+              onChangeText={(text) => change({ idNumber: text.replace(/\D/g, '').slice(0, 9) })}
+              placeholder="9 ספרות, נדרש לרישום לטסט"
+              keyboardType="number-pad"
+            />
+            <View style={styles.group}>
+              <ThemedText type="smallBold">כתובת איסוף לשיעורים</ThemedText>
+              <View style={authFormStyles.row}>
+                <View style={styles.wide}>
+                  <FormField
+                    label="רחוב"
+                    value={draft.street}
+                    onChangeText={(street) => change({ street })}
+                    autoComplete="street-address"
+                    textContentType="streetAddressLine1"
+                  />
+                </View>
+                <View style={authFormStyles.rowItem}>
+                  <FormField
+                    label="מספר"
+                    value={draft.houseNumber}
+                    onChangeText={(houseNumber) => change({ houseNumber })}
+                    keyboardType="numbers-and-punctuation"
+                  />
+                </View>
+              </View>
+              <FormField
+                label="עיר"
+                value={draft.city}
+                onChangeText={(city) => change({ city })}
+                textContentType="addressCity"
+              />
+              <FormField
+                label="הערות לאיסוף (לא חובה)"
+                value={draft.pickupNotes}
+                onChangeText={(pickupNotes) => change({ pickupNotes })}
+                placeholder="למשל: ליד השער האחורי"
+              />
+            </View>
+            {isMinor(draft.birthDate) && (
+              <View style={styles.group}>
+                <ThemedText type="smallBold">פרטי הורה (חובה מתחת לגיל 18)</ThemedText>
+                <FormField
+                  label="שם ההורה"
+                  value={draft.parentName}
+                  onChangeText={(parentName) => change({ parentName })}
+                />
+                <View style={authFormStyles.row}>
+                  <View style={styles.wide}>
+                    <FormField
+                      label="טלפון ההורה"
+                      value={draft.parentPhone}
+                      onChangeText={(parentPhone) => change({ parentPhone })}
+                      placeholder="050-1234567"
+                      keyboardType="phone-pad"
+                    />
+                  </View>
+                  <View style={authFormStyles.rowItem}>
+                    <FormField
+                      label="קרבה"
+                      value={draft.parentRelation}
+                      onChangeText={(parentRelation) => change({ parentRelation })}
+                      placeholder="אמא / אבא"
+                    />
+                  </View>
+                </View>
+              </View>
+            )}
             <View style={styles.group}>
               <ThemedText type="small" themeColor="textSecondary">
                 שפה מועדפת
@@ -223,12 +347,25 @@ export default function SignUpScreen() {
           label="סיסמה"
           value={draft.password}
           onChangeText={(password) => change({ password })}
-          placeholder={`לפחות ${MIN_PASSWORD_LENGTH} תווים`}
+          placeholder={`לפחות ${MIN_PASSWORD_LENGTH} תווים, אות וספרה`}
           secureTextEntry
           autoCapitalize="none"
           autoComplete="new-password"
           textContentType="newPassword"
+          passwordRules={`minlength: ${MIN_PASSWORD_LENGTH}; required: lower; required: digit;`}
         />
+        {draft.password.length > 0 && (
+          <View style={styles.checks}>
+            {getPasswordChecks(draft.password).map((check) => (
+              <ThemedText
+                key={check.label}
+                type="small"
+                themeColor={check.met ? 'slotAvailable' : 'textSecondary'}>
+                {check.met ? '✓' : '○'} {check.label}
+              </ThemedText>
+            ))}
+          </View>
+        )}
         <FormField
           label="אימות סיסמה"
           value={draft.confirmPassword}

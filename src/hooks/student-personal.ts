@@ -42,6 +42,7 @@ export type PersonalRow = {
   id: string;
   email: string;
   birth_date: string | null;
+  id_number: string | null;
   preferred_language: Language;
   reminder_channel: ReminderChannel;
   reminder_hours_before: number;
@@ -52,7 +53,7 @@ export type PersonalRow = {
 
 /** Columns of public.profiles with the student's addresses, contacts and availability. */
 export const PERSONAL_COLUMNS =
-  'id, email, birth_date, preferred_language, reminder_channel, reminder_hours_before, ' +
+  'id, email, birth_date, id_number, preferred_language, reminder_channel, reminder_hours_before, ' +
   'student_addresses(id, label, street, house_number, city, pickup_notes, is_default), ' +
   'student_contacts(id, kind, name, phone, relation, is_payer), ' +
   'student_availability(id, weekday, start_min, end_min)';
@@ -62,6 +63,7 @@ export function toPersonal(row: PersonalRow): StudentPersonal {
     profileId: row.id,
     email: row.email,
     birthDate: parseDay(row.birth_date),
+    idNumber: row.id_number,
     language: row.preferred_language,
     reminderChannel: row.reminder_channel,
     reminderHoursBefore: row.reminder_hours_before,
@@ -104,13 +106,14 @@ export async function fetchMyPersonal(userId: string): Promise<StudentPersonal |
 const SAVE_FAILED = 'השמירה נכשלה. יש לבדוק את החיבור ולנסות שוב.';
 
 export type ProfileChanges = Partial<
-  Pick<StudentPersonal, 'birthDate' | 'language' | 'reminderChannel' | 'reminderHoursBefore'>
+  Pick<StudentPersonal, 'birthDate' | 'idNumber' | 'language' | 'reminderChannel' | 'reminderHoursBefore'>
 >;
 
 /** Only the student changes these (their own account). Returns an error in Hebrew, or null. */
 export async function updateMyProfile(userId: string, changes: ProfileChanges) {
   const columns: Record<string, unknown> = {};
   if (changes.birthDate !== undefined) columns.birth_date = toDayString(changes.birthDate);
+  if (changes.idNumber !== undefined) columns.id_number = changes.idNumber || null;
   if (changes.language !== undefined) columns.preferred_language = changes.language;
   if (changes.reminderChannel !== undefined) columns.reminder_channel = changes.reminderChannel;
   if (changes.reminderHoursBefore !== undefined) columns.reminder_hours_before = changes.reminderHoursBefore;

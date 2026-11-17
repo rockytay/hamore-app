@@ -12,14 +12,28 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ChoiceChips, DateField, FieldHint, optionsOf, TextField, ToggleRow } from '@/components/form-ui';
 import { formatShekels } from '@/components/payment-badge';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import {
+  PAYER_LABELS,
+  PAYMENT_PLAN_LABELS,
+  PRIOR_LICENSE_LABELS,
+  REFERRAL_LABELS,
+  type Payer,
+  type PaymentPlan,
+  type PriorLicense,
+  type ReferralSource,
+} from '@/hooks/student-file';
 import { getPlan, useCurrentUser } from '@/hooks/use-current-user';
 import {
   findStudentAccount,
+  formatPhone,
   isValidIsraeliId,
+  isValidPhone,
+  PAYMENT_METHOD_LABELS,
   LICENSE_CATEGORIES,
   STUDENT_HAS_OTHER_TEACHER,
   StudentSaveError,
@@ -27,6 +41,7 @@ import {
   useAddStudent,
   useStudents,
   type LicenseCategory,
+  type PaymentMethod,
   type StudentAccount,
   type Transmission,
 } from '@/hooks/use-students';
@@ -48,6 +63,27 @@ type Form = {
   licenseCategory: LicenseCategory;
   transmission: Transmission;
   theoryPassed: boolean;
+  theoryPassedAt: Date | null;
+  /** Null until the teacher answers: it is a required question. */
+  hasGreenForm: boolean | null;
+  greenFormIssuedAt: Date | null;
+  eyeTestDone: boolean;
+  needsGlasses: boolean;
+  healthDeclarationDone: boolean;
+  priorLicense: PriorLicense;
+  /** Asked only when the student did not enter a birth date. */
+  minorAnswer: boolean;
+  street: string;
+  houseNumber: string;
+  city: string;
+  pickupNotes: string;
+  parentName: string;
+  parentPhone: string;
+  parentRelation: string;
+  paymentPlan: PaymentPlan | null;
+  payer: Payer;
+  preferredPaymentMethod: PaymentMethod | null;
+  referralSource: ReferralSource | null;
   lessonsCompleted: number;
   balanceType: BalanceType;
   /** Shekels, kept as text while typing. */
@@ -73,6 +109,25 @@ export default function AddStudentScreen() {
     licenseCategory: teacherCategories[0],
     transmission: user?.transmission ?? 'automatic',
     theoryPassed: false,
+    theoryPassedAt: null,
+    hasGreenForm: null,
+    greenFormIssuedAt: null,
+    eyeTestDone: false,
+    needsGlasses: false,
+    healthDeclarationDone: false,
+    priorLicense: 'none',
+    minorAnswer: false,
+    street: '',
+    houseNumber: '',
+    city: '',
+    pickupNotes: '',
+    parentName: '',
+    parentPhone: '',
+    parentRelation: '',
+    paymentPlan: null,
+    payer: 'student',
+    preferredPaymentMethod: null,
+    referralSource: null,
     lessonsCompleted: 0,
     balanceType: 'even',
     balanceAmount: '',
@@ -138,6 +193,8 @@ export default function AddStudentScreen() {
       } else {
         Keyboard.dismiss();
         setAccount(found);
+        // A minor's lessons are usually paid by a parent.
+        if (found.isMinor) setForm((current) => ({ ...current, payer: 'parent' }));
       }
     } catch (error) {
       const message =
@@ -148,12 +205,39 @@ export default function AddStudentScreen() {
     }
   };
 
+  // What the student already entered at sign-up is not asked again.
+  const needsIdNumber = !!account && !account.hasIdNumber;
+  const needsAddress = !!account && !account.hasAddress;
+  const isMinor = !!account && (account.hasBirthDate ? account.isMinor : form.minorAnswer);
+  const needsParent = isMinor && !account?.hasParent;
+
   const validate = (): FormErrors => {
     const result: FormErrors = {};
+    const today = new Date();
     if (!account) result.email = 'יש לחפש ולמצוא את התלמיד לפי אימייל';
-    if (form.idNumber.trim() && !isValidIsraeliId(form.idNumber)) {
-      result.idNumber = 'מספר תעודת הזהות אינו תקין';
+    if (needsIdNumber && !isValidIsraeliId(form.idNumber)) {
+      result.idNumber = form.idNumber.trim() ? 'מספר תעודת הזהות אינו תקין' : 'חובה: נדרש לרישום לטסט';
     }
+    if (needsAddress) {
+      if (!form.street.trim()) result.street = 'חובה';
+      if (!form.houseNumber.trim()) result.houseNumber = 'חובה';
+      if (!form.city.trim()) result.city = 'חובה';
+    }
+    if (needsParent) {
+      if (!form.parentName.trim()) result.parentName = 'חובה מתחת לגיל 18';
+      if (!isValidPhone(form.parentPhone)) result.parentPhone = 'יש להזין מספר נייד תקין';
+      if (!form.parentRelation.trim()) result.parentRelation = 'חובה';
+    }
+    if (form.hasGreenForm === null) result.hasGreenForm = 'יש לבחור';
+    if (form.hasGreenForm) {
+      if (!form.greenFormIssuedAt) result.greenFormIssuedAt = 'יש להזין את תאריך ההנפקה';
+      else if (form.greenFormIssuedAt > today) result.greenFormIssuedAt = 'התאריך עוד לא הגיע';
+    }
+    if (form.theoryPassed) {
+      if (!form.theoryPassedAt) result.theoryPassedAt = 'יש להזין את תאריך המבחן';
+      else if (form.theoryPassedAt > today) result.theoryPassedAt = 'התאריך עוד לא הגיע';
+    }
+    if (!form.paymentPlan) result.paymentPlan = 'יש לבחור תוכנית תשלום';
     if (form.balanceType !== 'even' && !(Number(form.balanceAmount) > 0)) {
       result.balanceAmount = 'יש להזין סכום';
     }
@@ -176,13 +260,44 @@ export default function AddStudentScreen() {
     try {
       student = await addStudent({
         profileId: account.profileId,
-        idNumber: form.idNumber.replace(/\D/g, '') || undefined,
+        idNumber: (needsIdNumber && form.idNumber.replace(/\D/g, '')) || undefined,
         licenseCategory: form.licenseCategory,
         transmission: form.transmission,
         theoryPassed: form.theoryPassed,
         lessonsCompleted: form.lessonsCompleted,
         balance: form.balanceType === 'credit' ? amount : form.balanceType === 'debt' ? -amount : 0,
         firstNote: form.firstNote.trim() || undefined,
+        file: {
+          greenFormIssuedAt: form.hasGreenForm ? form.greenFormIssuedAt : null,
+          eyeTestDone: form.eyeTestDone,
+          needsGlasses: form.needsGlasses,
+          healthDeclarationDone: form.healthDeclarationDone,
+          theoryPassedAt: form.theoryPassed ? form.theoryPassedAt : null,
+          priorLicense: form.priorLicense,
+          paymentPlan: form.paymentPlan ?? 'per_lesson',
+          payer: form.payer,
+          preferredPaymentMethod: form.preferredPaymentMethod,
+          referralSource: form.referralSource,
+        },
+        address: needsAddress
+          ? {
+              label: 'בית',
+              street: form.street,
+              houseNumber: form.houseNumber,
+              city: form.city,
+              pickupNotes: form.pickupNotes,
+              isDefault: true,
+            }
+          : undefined,
+        parent: needsParent
+          ? {
+              kind: 'parent',
+              name: form.parentName,
+              phone: formatPhone(form.parentPhone),
+              relation: form.parentRelation,
+              isPayer: form.payer === 'parent',
+            }
+          : undefined,
       });
     } catch (error) {
       const message = error instanceof StudentSaveError ? error.message : 'שמירת התלמיד נכשלה. יש לנסות שוב.';
@@ -288,16 +403,112 @@ export default function AddStudentScreen() {
 
           {account && (
             <>
-              <FormSection title="פרטים נוספים">
-                <Input
-                  label="תעודת זהות (לא חובה)"
-                  value={form.idNumber}
-                  onChange={(value) => change('idNumber', value.replace(/\D/g, '').slice(0, 9))}
-                  placeholder="9 ספרות"
-                  keyboardType="number-pad"
-                  error={errors.idNumber}
-                />
+              <ThemedText type="small" themeColor="textSecondary" style={styles.hint}>
+                שדות עם * הם חובה. פרטים שהתלמיד/ה כבר מילא/ה בהרשמה לא נשאלים שוב.
+              </ThemedText>
+
+              <FormSection title="פרטים אישיים">
+                {needsIdNumber ? (
+                  <Input
+                    label="תעודת זהות *"
+                    value={form.idNumber}
+                    onChange={(value) => change('idNumber', value.replace(/\D/g, '').slice(0, 9))}
+                    placeholder="9 ספרות, נדרש לרישום לטסט"
+                    keyboardType="number-pad"
+                    error={errors.idNumber}
+                  />
+                ) : (
+                  <Given label="תעודת זהות" />
+                )}
+                {account.hasBirthDate ? (
+                  <Given label={account.isMinor ? 'תאריך לידה (מתחת לגיל 18)' : 'תאריך לידה'} />
+                ) : (
+                  <ToggleRow
+                    label="התלמיד/ה מתחת לגיל 18"
+                    hint="התלמיד/ה לא הזין/ה תאריך לידה. אפשר להוסיף אותו בפרופיל שלו/ה."
+                    value={form.minorAnswer}
+                    onChange={(value) => change('minorAnswer', value)}
+                  />
+                )}
               </FormSection>
+
+              <FormSection title="כתובת איסוף">
+                {needsAddress ? (
+                  <>
+                    <View style={styles.inline}>
+                      <View style={styles.wide}>
+                        <TextField
+                          label="רחוב *"
+                          value={form.street}
+                          onChange={(value) => change('street', value)}
+                          error={errors.street}
+                        />
+                      </View>
+                      <View style={styles.flex}>
+                        <TextField
+                          label="מספר *"
+                          value={form.houseNumber}
+                          onChange={(value) => change('houseNumber', value)}
+                          keyboardType="numbers-and-punctuation"
+                          error={errors.houseNumber}
+                        />
+                      </View>
+                    </View>
+                    <TextField
+                      label="עיר *"
+                      value={form.city}
+                      onChange={(value) => change('city', value)}
+                      error={errors.city}
+                    />
+                    <TextField
+                      label="הערות לאיסוף"
+                      value={form.pickupNotes}
+                      onChange={(value) => change('pickupNotes', value)}
+                      placeholder="למשל: ליד השער האחורי"
+                    />
+                  </>
+                ) : (
+                  <Given label="כתובת איסוף" />
+                )}
+              </FormSection>
+
+              {isMinor && (
+                <FormSection title="הורה (חובה מתחת לגיל 18)">
+                  {needsParent ? (
+                    <>
+                      <TextField
+                        label="שם ההורה *"
+                        value={form.parentName}
+                        onChange={(value) => change('parentName', value)}
+                        error={errors.parentName}
+                      />
+                      <View style={styles.inline}>
+                        <View style={styles.wide}>
+                          <TextField
+                            label="טלפון *"
+                            value={form.parentPhone}
+                            onChange={(value) => change('parentPhone', value)}
+                            placeholder="050-1234567"
+                            keyboardType="phone-pad"
+                            error={errors.parentPhone}
+                          />
+                        </View>
+                        <View style={styles.flex}>
+                          <TextField
+                            label="קרבה *"
+                            value={form.parentRelation}
+                            onChange={(value) => change('parentRelation', value)}
+                            placeholder="אמא / אבא"
+                            error={errors.parentRelation}
+                          />
+                        </View>
+                      </View>
+                    </>
+                  ) : (
+                    <Given label="פרטי הורה" />
+                  )}
+                </FormSection>
+              )}
 
               <FormSection title="רישיון">
                 <Label>דרגת רישיון</Label>
@@ -334,6 +545,53 @@ export default function AddStudentScreen() {
                   ))}
                 </View>
 
+                <Label>רישיון קודם</Label>
+                <ChoiceChips
+                  options={optionsOf(PRIOR_LICENSE_LABELS)}
+                  value={form.priorLicense}
+                  onChange={(value) => value && change('priorLicense', value)}
+                />
+              </FormSection>
+
+              <FormSection title="טופס ירוק ובריאות">
+                <Label>יש טופס ירוק? *</Label>
+                <ChoiceChips
+                  options={[
+                    { value: 'yes', label: 'יש' },
+                    { value: 'no', label: 'עדיין אין' },
+                  ]}
+                  value={form.hasGreenForm === null ? null : form.hasGreenForm ? 'yes' : 'no'}
+                  onChange={(value) => change('hasGreenForm', value === 'yes')}
+                />
+                {errors.hasGreenForm && <FieldHint danger>{errors.hasGreenForm}</FieldHint>}
+                {form.hasGreenForm && (
+                  <DateField
+                    label="תאריך הנפקה *"
+                    value={form.greenFormIssuedAt}
+                    onChange={(value) => change('greenFormIssuedAt', value)}
+                    hint={`בתוקף ${user?.validity.greenFormValidYears ?? 5} שנים מההנפקה`}
+                    error={errors.greenFormIssuedAt}
+                  />
+                )}
+                <ToggleRow
+                  label="בדיקת ראייה בוצעה"
+                  value={form.eyeTestDone}
+                  onChange={(value) => change('eyeTestDone', value)}
+                />
+                <ToggleRow
+                  label="חייב/ת משקפיים או עדשות"
+                  value={form.needsGlasses}
+                  onChange={(value) => change('needsGlasses', value)}
+                />
+                <ToggleRow
+                  label="הצהרת בריאות אושרה"
+                  hint="כן/לא בלבד. לא שומרים פירוט רפואי."
+                  value={form.healthDeclarationDone}
+                  onChange={(value) => change('healthDeclarationDone', value)}
+                />
+              </FormSection>
+
+              <FormSection title="תאוריה">
                 <Label>מבחן תאוריה</Label>
                 <View style={styles.chips}>
                   <Chip
@@ -347,6 +605,38 @@ export default function AddStudentScreen() {
                     onPress={() => change('theoryPassed', false)}
                   />
                 </View>
+                {form.theoryPassed && (
+                  <DateField
+                    label="תאריך המבחן *"
+                    value={form.theoryPassedAt}
+                    onChange={(value) => change('theoryPassedAt', value)}
+                    hint={`בתוקף ${user?.validity.theoryValidYears ?? 5} שנים`}
+                    error={errors.theoryPassedAt}
+                  />
+                )}
+              </FormSection>
+
+              <FormSection title="תשלום">
+                <Label>תוכנית תשלום *</Label>
+                <ChoiceChips
+                  options={optionsOf(PAYMENT_PLAN_LABELS)}
+                  value={form.paymentPlan}
+                  onChange={(value) => change('paymentPlan', value)}
+                />
+                {errors.paymentPlan && <FieldHint danger>{errors.paymentPlan}</FieldHint>}
+                <Label>מי משלם</Label>
+                <ChoiceChips
+                  options={optionsOf(PAYER_LABELS)}
+                  value={form.payer}
+                  onChange={(value) => value && change('payer', value)}
+                />
+                <Label>אמצעי תשלום מועדף</Label>
+                <ChoiceChips
+                  options={optionsOf(PAYMENT_METHOD_LABELS)}
+                  value={form.preferredPaymentMethod}
+                  onChange={(value) => change('preferredPaymentMethod', value)}
+                  allowNone
+                />
               </FormSection>
 
               <FormSection title="התחלה">
@@ -396,6 +686,14 @@ export default function AddStudentScreen() {
                     {formatShekels(user.lessonPrice)} לשיעור
                   </ThemedText>
                 )}
+
+                <Label>איך הגיע/ה אליך</Label>
+                <ChoiceChips
+                  options={optionsOf(REFERRAL_LABELS)}
+                  value={form.referralSource}
+                  onChange={(value) => change('referralSource', value)}
+                  allowNone
+                />
 
                 <Input
                   label="הערות (לא חובה)"
@@ -473,6 +771,21 @@ function FoundAccount({ account }: { account: StudentAccount }) {
           {account.phone || 'ללא טלפון'} · רשום/ה במערכת
         </ThemedText>
       </View>
+    </View>
+  );
+}
+
+/** A required detail the student already entered at sign-up. */
+function Given({ label }: { label: string }) {
+  return (
+    <View style={styles.given}>
+      <ThemedText type="small" themeColor="slotAvailable">
+        ✓
+      </ThemedText>
+      <ThemedText type="small">{label}</ThemedText>
+      <ThemedText type="small" themeColor="textSecondary">
+        · הוזן על ידי התלמיד/ה
+      </ThemedText>
     </View>
   );
 }
@@ -644,6 +957,14 @@ const styles = StyleSheet.create({
   },
   flex: {
     flex: 1,
+  },
+  wide: {
+    flex: 2,
+  },
+  given: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.one,
   },
   field: {
     gap: Spacing.one,

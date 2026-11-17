@@ -98,13 +98,16 @@ export type Reminder = {
   title: string;
   body?: string;
   /** The tab that deals with it, if any. */
-  link?: '/student/lessons' | '/student/payments' | '/student/progress' | '/student/profile';
+  link?: '/student/lessons' | '/student/payments' | '/student/progress' | '/student/profile' | '/student/profile/details';
 };
 
 /** A day with the start times a lesson of the chosen type fits into. */
 export type OpenDay = { day: Date; starts: Date[] };
 
 /** Times snap to this step, like in the teacher's calendar. */
+/** Missing personal details, fixed on the student's details screen. */
+const PROFILE_ALERTS = new Set(['parent-missing', 'id-number-missing', 'address-missing']);
+
 const STEP_MIN = 15;
 /** How far ahead a student can request lessons. */
 const REQUEST_DAYS = 14;
@@ -423,6 +426,8 @@ function buildReminders(data: PortalData, now: Date): Reminder[] {
       tests: data.tests,
       birthDate: data.personal?.birthDate ?? null,
       contacts: data.personal?.contacts ?? [],
+      hasAddress: !data.personal || data.personal.addresses.length > 0,
+      hasIdNumber: !data.personal || !!data.personal.idNumber,
       licenseCategory: record.licenseCategory,
       lessonsCompleted: record.lessonsCompleted,
       validity: data.teacher?.validity ?? DEFAULT_VALIDITY,
@@ -432,7 +437,7 @@ function buildReminders(data: PortalData, now: Date): Reminder[] {
   )) {
     reminders.push({
       ...alert,
-      link: alert.id === 'parent-missing' ? '/student/profile' : '/student/progress',
+      link: PROFILE_ALERTS.has(alert.id) ? '/student/profile/details' : '/student/progress',
     });
   }
 
