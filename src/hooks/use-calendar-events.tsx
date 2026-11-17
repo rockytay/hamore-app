@@ -9,6 +9,7 @@ import {
   type PropsWithChildren,
 } from 'react';
 
+import type { SpecialLessonKind } from '@/hooks/student-file';
 import { useSession } from '@/hooks/use-auth';
 import type { CurrentUser } from '@/hooks/use-current-user';
 import { useAllStudents } from '@/hooks/use-students';
@@ -34,6 +35,8 @@ export type LessonDetails = {
   /** When the lesson was saved, and last changed (e.g. approved). Unknown until saved. */
   createdAt?: Date;
   updatedAt?: Date;
+  /** Night, highway or rain driving, for the student's progress. */
+  specialKind?: SpecialLessonKind | null;
 };
 
 /**
@@ -123,6 +126,7 @@ type LessonRow = {
   status: 'pending' | 'booked' | 'cancelled';
   awaiting: 'teacher' | 'student' | null;
   price: number;
+  special_kind: SpecialLessonKind | null;
   created_at: string;
   updated_at: string;
 };
@@ -131,7 +135,7 @@ type LessonTypeRow = { id: string; name: string; duration_min: number; price: nu
 
 const SLOT_COLUMNS = 'id, starts_at, ends_at';
 const LESSON_COLUMNS =
-  'id, student_id, lesson_type_id, starts_at, ends_at, status, awaiting, price, created_at, updated_at';
+  'id, student_id, lesson_type_id, starts_at, ends_at, status, awaiting, price, special_kind, created_at, updated_at';
 
 function toTimes(startsAt: string, endsAt: string) {
   const start = new Date(startsAt);
@@ -232,6 +236,7 @@ function useCalendarState() {
           lessonTypeId: row.lesson_type_id,
           lessonTypeName: typeNames.get(row.lesson_type_id) ?? '',
           price: row.price,
+          specialKind: row.special_kind,
           createdAt: new Date(row.created_at),
           updatedAt: new Date(row.updated_at),
         };
@@ -265,6 +270,7 @@ function useCalendarState() {
       ...toTimestamps(event),
       status: event.status,
       awaiting: event.status === 'pending' ? event.awaiting : null,
+      special_kind: event.specialKind ?? null,
     };
     const result = isNew
       ? await supabase

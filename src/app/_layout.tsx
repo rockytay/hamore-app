@@ -57,6 +57,13 @@ function RootNavigator() {
         <Stack.Screen name="student" />
       </Stack.Protected>
 
+      <Stack.Protected guard={!!session}>
+        <Stack.Screen
+          name="delete-account"
+          options={{ headerShown: true, presentation: 'modal', title: 'מחיקת חשבון' }}
+        />
+      </Stack.Protected>
+
       <Stack.Protected guard={!session}>
         <Stack.Screen name="sign-in" />
         <Stack.Screen name="sign-up" options={{ animation: 'slide_from_left' }} />

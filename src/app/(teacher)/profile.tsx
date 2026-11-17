@@ -1,4 +1,5 @@
 import Constants from 'expo-constants';
+import { router } from 'expo-router';
 import { SymbolView, type SymbolViewProps } from 'expo-symbols';
 import { useState, type ReactNode } from 'react';
 import {
@@ -36,6 +37,9 @@ import { useTheme } from '@/hooks/use-theme';
 import { confirmAction, showMessage } from '@/utils/dialogs';
 
 type SymbolName = SymbolViewProps['name'];
+
+/** Choices for how many years a green form or theory test stays valid. */
+const VALIDITY_YEARS = [1, 2, 3, 4, 5, 6, 7];
 
 /** Editable copy of the profile; the price is kept as text while typing. */
 type Draft = Omit<CurrentUser, 'lessonPrice' | 'settings' | 'subscription'> & { lessonPrice: string };
@@ -199,6 +203,26 @@ function Profile({ user }: { user: CurrentUser }) {
           getLabel={(minutes) => `${minutes} דק׳`}
           isSelected={(minutes) => shown.lessonDurationMin === minutes}
           onSelect={(lessonDurationMin) => change({ lessonDurationMin })}
+        />
+        <ChoiceField
+          label="תוקף טופס ירוק"
+          summary={`${shown.validity.greenFormValidYears} שנים`}
+          hint="להתראות על טופס ירוק שפג תוקפו"
+          editing={editing}
+          options={VALIDITY_YEARS}
+          getLabel={(years) => `${years} שנים`}
+          isSelected={(years) => shown.validity.greenFormValidYears === years}
+          onSelect={(greenFormValidYears) => change({ validity: { ...shown.validity, greenFormValidYears } })}
+        />
+        <ChoiceField
+          label="תוקף מבחן תאוריה"
+          summary={`${shown.validity.theoryValidYears} שנים`}
+          hint="להתראות על תאוריה שפג תוקפה"
+          editing={editing}
+          options={VALIDITY_YEARS}
+          getLabel={(years) => `${years} שנים`}
+          isSelected={(years) => shown.validity.theoryValidYears === years}
+          onSelect={(theoryValidYears) => change({ validity: { ...shown.validity, theoryValidYears } })}
           last
         />
       </Section>
@@ -253,6 +277,12 @@ function Profile({ user }: { user: CurrentUser }) {
               onPress={() =>
                 confirmAction('התנתקות', 'האם להתנתק מהחשבון?', 'התנתקות', signOut)
               }
+            />
+            <LinkRow
+              icon={{ ios: 'trash', android: 'delete', web: 'delete' }}
+              label="מחיקת חשבון"
+              danger
+              onPress={() => router.push('/delete-account')}
               last
             />
           </Section>

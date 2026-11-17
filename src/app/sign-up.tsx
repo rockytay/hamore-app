@@ -1,6 +1,6 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
 import {
   AuthScreen,
@@ -11,15 +11,30 @@ import {
   PrimaryButton,
   RoleToggle,
 } from '@/components/auth-form';
+import { ChoiceChips, optionsOf, ToggleRow } from '@/components/form-ui';
+import { ThemedText } from '@/components/themed-text';
+import { Spacing } from '@/constants/theme';
+import { getAge, LANGUAGE_LABELS, parseTypedDate, type Language } from '@/hooks/student-file';
 import { useAuth, type Role, type SignUpInput } from '@/hooks/use-auth';
 import { formatPhone, isValidPhone } from '@/hooks/use-students';
 
+const styles = StyleSheet.create({
+  group: {
+    gap: Spacing.two,
+  },
+});
+
 const MIN_PASSWORD_LENGTH = 6;
 
-type Draft = Omit<SignUpInput, 'role' | 'driverLicenseNumber' | 'teacherLicenseNumber'> & {
+type Draft = Pick<SignUpInput, 'firstName' | 'lastName' | 'phone' | 'email' | 'password'> & {
   driverLicenseNumber: string;
   teacherLicenseNumber: string;
   confirmPassword: string;
+  /** Students: typed as DD/MM/YYYY. */
+  birthDate: string;
+  language: Language;
+  privacyConsent: boolean;
+  marketingConsent: boolean;
 };
 
 const EMPTY_DRAFT: Draft = {
@@ -31,11 +46,25 @@ const EMPTY_DRAFT: Draft = {
   email: '',
   password: '',
   confirmPassword: '',
+  birthDate: '',
+  language: 'he',
+  privacyConsent: false,
+  marketingConsent: false,
 };
+
+/** Students younger than this can't start anything yet; older than this is a typo. */
+const MIN_STUDENT_AGE = 14;
+const MAX_STUDENT_AGE = 100;
 
 /** Returns an error message in Hebrew, or null if the account can be created. */
 function validate(draft: Draft, role: Role) {
   if (!draft.firstName.trim() || !draft.lastName.trim()) return 'יש למלא שם פרטי ושם משפחה.';
+  if (role === 'student') {
+    const born = parseTypedDate(draft.birthDate);
+    if (!born) return 'יש להזין תאריך לידה תקין (DD/MM/YYYY).';
+    const age = getAge(born);
+    if (age < MIN_STUDENT_AGE || age > MAX_STUDENT_AGE) return 'תאריך הלידה אינו נראה תקין.';
+  }
   if (role === 'teacher' && !draft.driverLicenseNumber) {
     return 'יש להזין מספר רישיון נהיגה, כדי שנוכל לאמת שאתם מורים לנהיגה.';
   }
@@ -48,6 +77,9 @@ function validate(draft: Draft, role: Role) {
     return `הסיסמה צריכה להכיל לפחות ${MIN_PASSWORD_LENGTH} תווים.`;
   }
   if (draft.password !== draft.confirmPassword) return 'הסיסמאות אינן תואמות.';
+  if (role === 'student' && !draft.privacyConsent) {
+    return 'יש לאשר את שמירת הפרטים כדי ליצור חשבון.';
+  }
   return null;
 }
 
@@ -80,6 +112,12 @@ export default function SignUpScreen() {
       ...(role === 'teacher' && {
         driverLicenseNumber: draft.driverLicenseNumber,
         teacherLicenseNumber: draft.teacherLicenseNumber,
+      }),
+      ...(role === 'student' && {
+        birthDate: parseTypedDate(draft.birthDate) ?? undefined,
+        preferredLanguage: draft.language,
+        privacyConsent: draft.privacyConsent,
+        marketingConsent: draft.marketingConsent,
       }),
     });
     setBusy(false);
@@ -139,6 +177,29 @@ export default function SignUpScreen() {
             />
           </>
         )}
+        {role === 'student' && (
+          <>
+            <FormField
+              label="תאריך לידה"
+              value={draft.birthDate}
+              onChangeText={(text) => change({ birthDate: text.replace(/[^\d/.-]/g, '').slice(0, 10) })}
+              placeholder="DD/MM/YYYY"
+              keyboardType="numbers-and-punctuation"
+              autoComplete="birthdate-full"
+            />
+            <View style={styles.group}>
+              <ThemedText type="small" themeColor="textSecondary">
+                שפה מועדפת
+              </ThemedText>
+              <ChoiceChips
+                options={optionsOf(LANGUAGE_LABELS)}
+                value={draft.language}
+                onChange={(language) => change({ language: language ?? 'he' })}
+                surface="backgroundElement"
+              />
+            </View>
+          </>
+        )}
         <FormField
           label="טלפון נייד"
           value={draft.phone}
@@ -179,6 +240,21 @@ export default function SignUpScreen() {
           returnKeyType="go"
           onSubmitEditing={submit}
         />
+        {role === 'student' && (
+          <View style={styles.group}>
+            <ToggleRow
+              label="אני מאשר/ת שמירת הפרטים שלי לצורך ניהול השיעורים"
+              hint="הפרטים נשמרים בחשבון שלך וגלויים רק למורה שלך. חובה."
+              value={draft.privacyConsent}
+              onChange={(privacyConsent) => change({ privacyConsent })}
+            />
+            <ToggleRow
+              label="אפשר לשלוח לי עדכונים ומבצעים"
+              value={draft.marketingConsent}
+              onChange={(marketingConsent) => change({ marketingConsent })}
+            />
+          </View>
+        )}
         <FormError message={error} />
         <PrimaryButton
           label={role === 'teacher' ? 'הרשמה כמורה' : 'הרשמה כתלמיד/ה'}

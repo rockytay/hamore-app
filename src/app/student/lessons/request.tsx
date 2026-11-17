@@ -35,7 +35,7 @@ export default function RequestLessonScreen() {
 type OpenDaysState = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready'; days: OpenDay[] };
 
 function RequestForm({ lessonTypes }: { lessonTypes: LessonType[] }) {
-  const { teacher, loadOpenDays, requestLesson } = useStudentPortal();
+  const { teacher, prices, loadOpenDays, requestLesson } = useStudentPortal();
   const [type, setType] = useState<LessonType>(lessonTypes[0]);
   const [openDays, setOpenDays] = useState<OpenDaysState>({ status: 'loading' });
   const [dayIndex, setDayIndex] = useState(0);
@@ -82,7 +82,7 @@ function RequestForm({ lessonTypes }: { lessonTypes: LessonType[] }) {
     router.back();
   };
 
-  const price = getStudentLessonPrice(type, teacher);
+  const price = getStudentLessonPrice(type, teacher, prices);
   const days = openDays.status === 'ready' ? openDays.days : [];
   const day = days[dayIndex];
 

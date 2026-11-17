@@ -1,3 +1,4 @@
+import type { ValiditySettings } from '@/hooks/student-file';
 import { useAuth, useSession } from '@/hooks/use-auth';
 import type { LicenseCategory, Transmission } from '@/hooks/use-students';
 
@@ -55,6 +56,8 @@ export type CurrentUser = {
   /** Default length of a new lesson in the calendar. */
   lessonDurationMin: number;
   settings: TeacherSettings;
+  /** How long a green form and a passed theory test stay valid, for the expiry alerts. */
+  validity: ValiditySettings;
   subscription: Subscription;
 };
 

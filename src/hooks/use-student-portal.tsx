@@ -8,6 +8,24 @@ import {
   type PropsWithChildren,
 } from 'react';
 
+import {
+  DEFAULT_VALIDITY,
+  FILE_COLUMNS,
+  getFileAlerts,
+  TEST_COLUMNS,
+  toFile,
+  toTest,
+  type FileRow,
+  type SpecialLessonKind,
+  type StudentFile,
+  type StudentPersonal,
+  type StudentTest,
+  type TaskProgress,
+  type TaskStatus,
+  type TestRow,
+  type ValiditySettings,
+} from '@/hooks/student-file';
+import { fetchMyPersonal } from '@/hooks/student-personal';
 import { useSession } from '@/hooks/use-auth';
 import type { LessonType } from '@/hooks/use-calendar-events';
 import type {
@@ -37,6 +55,8 @@ export type StudentTeacher = {
   /** In shekels, for a lesson of lessonDurationMin minutes. */
   lessonPrice: number;
   lessonDurationMin: number;
+  /** How long the green form and theory stay valid, for the expiry reminders. */
+  validity: ValiditySettings;
 };
 
 /** The student's place on their teacher's list. */
@@ -45,6 +65,8 @@ export type StudentRecord = {
   licenseCategory: LicenseCategory;
   transmission: Transmission;
   theoryPassed: boolean;
+  /** The teacher's file: green form, eye test, theory, status, payment plan... */
+  file: StudentFile;
   joinedAt: Date;
   /** Calculated by the database: lessons before joining + booked lessons that have ended. */
   lessonsCompleted: number;
@@ -64,6 +86,7 @@ export type StudentLesson = {
   lessonTypeName: string;
   /** In shekels. */
   price: number;
+  specialKind: SpecialLessonKind | null;
 };
 
 /** A lesson note the teacher chose to share with the student. */
@@ -75,7 +98,7 @@ export type Reminder = {
   title: string;
   body?: string;
   /** The tab that deals with it, if any. */
-  link?: '/student/lessons' | '/student/payments' | '/student/progress';
+  link?: '/student/lessons' | '/student/payments' | '/student/progress' | '/student/profile';
 };
 
 /** A day with the start times a lesson of the chosen type fits into. */
@@ -87,11 +110,10 @@ const STEP_MIN = 15;
 const REQUEST_DAYS = 14;
 const MINUTE = 60_000;
 
-type RecordRow = {
+type RecordRow = FileRow & {
   id: string;
   license_category: LicenseCategory;
   transmission: Transmission;
-  theory_passed: boolean;
   created_at: string;
 };
 type BalanceRow = { lessons_completed: number; balance: number; total_paid: number; total_charged: number };
@@ -103,6 +125,7 @@ type LessonRow = {
   status: 'pending' | 'booked';
   awaiting: 'teacher' | 'student' | null;
   price: number;
+  special_kind: SpecialLessonKind | null;
 };
 type PaymentRow = { id: string; amount: number; method: PaymentMethod; paid_at: string; note: string };
 type NoteRow = { id: string; body: string; created_at: string };
@@ -117,6 +140,8 @@ type TeacherRow = {
   transmission: Transmission;
   lesson_price: number;
   lesson_duration_min: number;
+  green_form_valid_years: number;
+  theory_valid_years: number;
 };
 type TimeRow = { starts_at: string; ends_at: string };
 
@@ -127,17 +152,37 @@ type PortalData = {
   payments: Payment[];
   notes: SharedNote[];
   lessonTypes: LessonType[];
+  tests: StudentTest[];
+  taskProgress: TaskProgress;
+  /** Lesson type id → the student's own price, where the teacher set one. */
+  prices: Record<string, number>;
+  /** What the student filled in about themselves. Loaded even before a teacher adds them. */
+  personal: StudentPersonal | null;
 };
 
-const EMPTY: PortalData = { record: null, teacher: null, lessons: [], payments: [], notes: [], lessonTypes: [] };
+const EMPTY: PortalData = {
+  record: null,
+  teacher: null,
+  lessons: [],
+  payments: [],
+  notes: [],
+  lessonTypes: [],
+  tests: [],
+  taskProgress: {},
+  prices: {},
+  personal: null,
+};
 
-async function fetchPortal(): Promise<PortalData | null> {
+async function fetchPortal(userId: string): Promise<PortalData | null> {
   // A student is on at most one teacher's active list, and only sees that row.
-  const record = await supabase
-    .from('students')
-    .select('id, license_category, transmission, theory_passed, created_at')
-    .is('removed_at', null)
-    .maybeSingle<RecordRow>();
+  const [record, personal] = await Promise.all([
+    supabase
+      .from('students')
+      .select(`id, license_category, transmission, created_at, ${FILE_COLUMNS}`)
+      .is('removed_at', null)
+      .maybeSingle<RecordRow>(),
+    fetchMyPersonal(userId),
+  ]);
   if (record.error) return null;
   if (!record.data) {
     // Without the student-side migration the database hides the row, which would look like
@@ -148,11 +193,11 @@ async function fetchPortal(): Promise<PortalData | null> {
       if (__DEV__) console.warn('Student portal: server check failed:', check.error.code, check.error.message);
       return null;
     }
-    return EMPTY;
+    return { ...EMPTY, personal };
   }
 
   const studentId = record.data.id;
-  const [balance, lessons, payments, notes, types, teacher] = await Promise.all([
+  const [balance, lessons, payments, notes, types, teacher, tests, progress, prices] = await Promise.all([
     supabase
       .from('student_balances')
       .select('lessons_completed, balance, total_paid, total_charged')
@@ -160,7 +205,7 @@ async function fetchPortal(): Promise<PortalData | null> {
       .maybeSingle<BalanceRow>(),
     supabase
       .from('lessons')
-      .select('id, lesson_type_id, starts_at, ends_at, status, awaiting, price')
+      .select('id, lesson_type_id, starts_at, ends_at, status, awaiting, price, special_kind')
       .neq('status', 'cancelled')
       .order('starts_at')
       .returns<LessonRow[]>(),
@@ -181,8 +226,16 @@ async function fetchPortal(): Promise<PortalData | null> {
       .order('sort_order')
       .returns<LessonTypeRow[]>(),
     supabase.rpc('my_teacher'),
+    supabase.from('student_tests').select(TEST_COLUMNS).order('scheduled_at', { ascending: false }).returns<TestRow[]>(),
+    supabase
+      .from('student_task_progress')
+      .select('task_id, status')
+      .returns<{ task_id: number; status: Exclude<TaskStatus, 'not_started'> }[]>(),
+    supabase.from('student_prices').select('lesson_type_id, price').returns<{ lesson_type_id: string; price: number }[]>(),
   ]);
-  if (balance.error || lessons.error || payments.error || notes.error || types.error || teacher.error) {
+  if (
+    [balance, lessons, payments, notes, types, teacher, tests, progress, prices].some((result) => result.error)
+  ) {
     return null;
   }
 
@@ -195,6 +248,7 @@ async function fetchPortal(): Promise<PortalData | null> {
       licenseCategory: record.data.license_category,
       transmission: record.data.transmission,
       theoryPassed: record.data.theory_passed,
+      file: toFile(record.data),
       joinedAt: new Date(record.data.created_at),
       lessonsCompleted: balance.data?.lessons_completed ?? 0,
       balance: balance.data?.balance ?? 0,
@@ -212,8 +266,16 @@ async function fetchPortal(): Promise<PortalData | null> {
           transmission: teacherRow.transmission,
           lessonPrice: teacherRow.lesson_price,
           lessonDurationMin: teacherRow.lesson_duration_min,
+          validity: {
+            greenFormValidYears: teacherRow.green_form_valid_years ?? DEFAULT_VALIDITY.greenFormValidYears,
+            theoryValidYears: teacherRow.theory_valid_years ?? DEFAULT_VALIDITY.theoryValidYears,
+          },
         }
       : null,
+    tests: (tests.data ?? []).map(toTest),
+    taskProgress: Object.fromEntries((progress.data ?? []).map((row) => [row.task_id, row.status])),
+    prices: Object.fromEntries((prices.data ?? []).map((row) => [row.lesson_type_id, row.price])),
+    personal,
     lessons: (lessons.data ?? []).map((row) => ({
       id: row.id,
       start: new Date(row.starts_at),
@@ -222,6 +284,7 @@ async function fetchPortal(): Promise<PortalData | null> {
       awaiting: row.awaiting,
       lessonTypeName: typeNames.get(row.lesson_type_id) ?? 'שיעור',
       price: row.price,
+      specialKind: row.special_kind,
     })),
     payments: (payments.data ?? []).map((row) => ({
       id: row.id,
@@ -240,8 +303,16 @@ async function fetchPortal(): Promise<PortalData | null> {
   };
 }
 
-/** The price of a lesson type, the same way the database works it out. */
-export function getStudentLessonPrice(type: LessonType, teacher: StudentTeacher | null) {
+/**
+ * The price of a lesson type, the same way the database works it out: the student's own
+ * price, else the type's price, else the teacher's lesson price per standard lesson.
+ */
+export function getStudentLessonPrice(
+  type: LessonType,
+  teacher: StudentTeacher | null,
+  prices: Record<string, number> = {}
+) {
+  if (prices[type.id] !== undefined) return prices[type.id];
   if (type.price !== null) return type.price;
   if (!teacher || teacher.lessonDurationMin <= 0) return 0;
   return teacher.lessonPrice * Math.max(1, Math.round(type.durationMin / teacher.lessonDurationMin));
@@ -299,6 +370,8 @@ function describeError(code: string | undefined) {
       return 'השיעור כבר לא ממתין לאישור שלך.';
     case 'HM016':
       return 'אי אפשר לבטל את הבקשה הזו. ייתכן שהמורה כבר ענה עליה.';
+    case 'HM017':
+      return 'השיעורים שלך מוקפאים כרגע. לחידוש יש לפנות למורה.';
     default:
       return 'הפעולה נכשלה. יש לבדוק את החיבור ולנסות שוב.';
   }
@@ -340,6 +413,35 @@ function buildReminders(data: PortalData, now: Date): Reminder[] {
       title: 'יש יתרה לתשלום',
       body: 'אפשר לראות את פירוט השיעורים והתשלומים בלשונית התשלומים.',
       link: '/student/payments',
+    });
+  }
+
+  // Green form, theory expiry, parent contact, upcoming tests and appeals.
+  for (const alert of getFileAlerts(
+    {
+      file: record.file,
+      tests: data.tests,
+      birthDate: data.personal?.birthDate ?? null,
+      contacts: data.personal?.contacts ?? [],
+      licenseCategory: record.licenseCategory,
+      lessonsCompleted: record.lessonsCompleted,
+      validity: data.teacher?.validity ?? DEFAULT_VALIDITY,
+      audience: 'student',
+    },
+    now
+  )) {
+    reminders.push({
+      ...alert,
+      link: alert.id === 'parent-missing' ? '/student/profile' : '/student/progress',
+    });
+  }
+
+  if (record.file.status === 'frozen') {
+    reminders.unshift({
+      id: 'frozen',
+      tone: 'info',
+      title: 'השיעורים שלך מוקפאים',
+      body: 'בזמן ההקפאה אי אפשר לבקש שיעורים חדשים. לחידוש יש לפנות למורה.',
     });
   }
 
@@ -398,7 +500,7 @@ export function StudentPortalProvider({ children }: PropsWithChildren) {
   useEffect(() => {
     if (!studentUserId) return;
     let cancelled = false;
-    fetchPortal().then((result) => {
+    fetchPortal(studentUserId).then((result) => {
       if (!cancelled) apply(result);
     });
     return () => {
@@ -408,10 +510,11 @@ export function StudentPortalProvider({ children }: PropsWithChildren) {
 
   const reload = useCallback(
     async (quiet = false) => {
+      if (!studentUserId) return;
       if (!quiet) setLoading(true);
-      apply(await fetchPortal());
+      apply(await fetchPortal(studentUserId));
     },
-    [apply]
+    [studentUserId, apply]
   );
 
   const loadOpenDays = useCallback(async (lessonType: LessonType) => {

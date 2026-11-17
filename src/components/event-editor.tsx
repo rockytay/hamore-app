@@ -7,6 +7,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { EVENT_COLORS, formatShortDate, formatTime } from '@/components/week-calendar';
 import { MaxContentWidth, Spacing, type ThemeColor } from '@/constants/theme';
+import { SPECIAL_LESSON_LABELS, type SpecialLessonKind } from '@/hooks/student-file';
 import {
   createEventId,
   DAY_END_MIN,
@@ -70,6 +71,9 @@ export function EventEditor({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [showDebtWarning, setShowDebtWarning] = useState(false);
+  const [specialKind, setSpecialKind] = useState<SpecialLessonKind | null>(
+    event && event.status !== 'available' ? (event.specialKind ?? null) : null
+  );
 
   const student = students.find((s) => s.id === studentId);
   const lessonType = lessonTypes.find((t) => t.id === lessonTypeId);
@@ -116,13 +120,16 @@ export function EventEditor({
           studentName: student.name,
           lessonTypeId: lessonType.id,
           lessonTypeName: lessonType.name,
+          specialKind,
         });
       }
+    } else if (event.status === 'available') {
+      save({ ...event, startMin, endMin });
     } else if (event.status === 'booked' && timesChanged) {
       // Moving a confirmed lesson needs the student's approval again.
-      save({ ...event, ...times, status: 'pending', awaiting: 'student' });
+      save({ ...event, ...times, status: 'pending', awaiting: 'student', specialKind });
     } else {
-      save({ ...event, startMin, endMin });
+      save({ ...event, startMin, endMin, specialKind });
     }
   };
 
@@ -355,6 +362,22 @@ export function EventEditor({
                 </ThemedText>
               </>
             )}
+          </>
+        )}
+
+        {type === 'lesson' && !awaitingTeacher && (isNew ? students.length > 0 : true) && (
+          <>
+            <ThemedText type="small">שיעור מיוחד (לא חובה):</ThemedText>
+            <View style={styles.studentChips}>
+              {(Object.keys(SPECIAL_LESSON_LABELS) as SpecialLessonKind[]).map((kind) => (
+                <StudentChip
+                  key={kind}
+                  name={SPECIAL_LESSON_LABELS[kind]}
+                  selected={specialKind === kind}
+                  onPress={() => setSpecialKind(specialKind === kind ? null : kind)}
+                />
+              ))}
+            </View>
           </>
         )}
 

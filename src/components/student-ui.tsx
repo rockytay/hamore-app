@@ -211,6 +211,17 @@ export function LessonCard({ lesson, children }: { lesson: StudentLesson; childr
   );
 }
 
+/** A horizontal bar filled to `value` (0–1). */
+export function ProgressBar({ value, color = 'slotAvailable' }: { value: number; color?: ThemeColor }) {
+  const theme = useTheme();
+  const percent = Math.max(0, Math.min(1, value)) * 100;
+  return (
+    <View style={[styles.bar, { backgroundColor: theme.backgroundSelected }]}>
+      <View style={[styles.bar, { width: `${percent}%`, backgroundColor: theme[color] }]} />
+    </View>
+  );
+}
+
 export function IconTile({ name, color }: { name: SymbolViewProps['name']; color: ThemeColor }) {
   const theme = useTheme();
   return (
@@ -324,6 +335,11 @@ const styles = StyleSheet.create({
   },
   flex: {
     flex: 1,
+  },
+  bar: {
+    height: 8,
+    borderRadius: 4,
+    overflow: 'hidden',
   },
   iconTile: {
     width: 32,

@@ -12,6 +12,8 @@ import {
 } from 'react-native';
 
 import { formatShekels, PAYMENT_COLORS, PAYMENT_TITLES } from '@/components/payment-badge';
+import { StudentFileSummary } from '@/components/student-file-summary';
+import { maskIdNumber } from '@/hooks/student-file';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
@@ -28,7 +30,6 @@ import {
   useRemoveStudent,
   useRestoreStudent,
   useSetNoteShared,
-  useSetTheoryPassed,
   useStudent,
   useStudents,
   type PaymentMethod,
@@ -78,14 +79,10 @@ export default function StudentDetailsScreen() {
           <Pressable onPress={() => Linking.openURL(`tel:${student.phone.replace(/-/g, '')}`)}>
             <ThemedText themeColor="accent">{student.phone}</ThemedText>
           </Pressable>
-          {student.idNumber && (
-            <ThemedText type="small" themeColor="textSecondary">
-              ת״ז {student.idNumber}
-            </ThemedText>
-          )}
+          {student.idNumber && <MaskedId idNumber={student.idNumber} />}
         </View>
 
-        <TheoryRow student={student} />
+        <StudentFileSummary student={student} />
 
         <View style={styles.stats}>
           <Stat label="שיעורים שבוצעו" value={String(student.lessonsCompleted)} />
@@ -298,34 +295,15 @@ function RemoveStudentSection({ student }: { student: Student }) {
   );
 }
 
-/** Whether the student passed the theory test. The student app reminds them until they do. */
-function TheoryRow({ student }: { student: Student }) {
-  const theme = useTheme();
-  const setTheoryPassed = useSetTheoryPassed();
-  const [busy, setBusy] = useState(false);
-
-  const change = async (passed: boolean) => {
-    setBusy(true);
-    const error = await setTheoryPassed(student.id, passed);
-    setBusy(false);
-    if (error) showMessage('שגיאה', error);
-  };
-
+/** The ID number is shown masked until the teacher taps it. */
+function MaskedId({ idNumber }: { idNumber: string }) {
+  const [shown, setShown] = useState(false);
   return (
-    <ThemedView type="backgroundElement" style={styles.switchRow}>
-      <View style={styles.switchText}>
-        <ThemedText type="small">עבר/ה מבחן תאוריה</ThemedText>
-        <ThemedText type="small" themeColor="textSecondary" style={styles.hint}>
-          {student.theoryPassed ? 'מוכן/ה לקראת טסט' : 'התלמיד/ה יקבל/תקבל תזכורת באפליקציה'}
-        </ThemedText>
-      </View>
-      <Switch
-        value={student.theoryPassed ?? false}
-        disabled={busy || !!student.removal}
-        onValueChange={change}
-        trackColor={{ true: theme.accent, false: theme.backgroundSelected }}
-      />
-    </ThemedView>
+    <Pressable onPress={() => setShown((current) => !current)} hitSlop={8}>
+      <ThemedText type="small" themeColor="textSecondary">
+        ת״ז {shown ? idNumber : maskIdNumber(idNumber)} · {shown ? 'הסתרה' : 'הצגה'}
+      </ThemedText>
+    </Pressable>
   );
 }
 

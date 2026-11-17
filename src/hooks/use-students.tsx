@@ -9,6 +9,22 @@ import {
 } from 'react';
 
 import { useSession } from '@/hooks/use-auth';
+import {
+  FILE_COLUMNS,
+  TEST_COLUMNS,
+  toFile,
+  toFileColumns,
+  toTest,
+  toTestColumns,
+  type FileRow,
+  type StudentFile,
+  type StudentPersonal,
+  type StudentTest,
+  type TaskProgress,
+  type TaskStatus,
+  type TestRow,
+} from '@/hooks/student-file';
+import { PERSONAL_COLUMNS, toPersonal, type PersonalRow } from '@/hooks/student-personal';
 import { supabase } from '@/lib/supabase';
 
 /** Israeli driving licence categories. */
@@ -70,6 +86,18 @@ export type Student = {
   createdAt: Date;
   /** Set when the teacher removed the student from their list. History is kept. */
   removal?: StudentRemoval;
+  /** The teacher's file: licence file, status, money arrangements. */
+  file: StudentFile;
+  /**
+   * What the student filled in about themselves (birth date, addresses, contacts...).
+   * Null if the student deleted their account.
+   */
+  personal: StudentPersonal | null;
+  /** Internal and practical tests, newest first. */
+  tests: StudentTest[];
+  taskProgress: TaskProgress;
+  /** Lesson type id → this student's own price in shekels. Other types use the usual price. */
+  prices: Record<string, number>;
 };
 
 export type RemovalReason = 'passed_test' | 'stopped' | 'other_teacher' | 'other';
@@ -121,7 +149,19 @@ export type NewPayment = {
  */
 export type NewStudent = Omit<
   Student,
-  'id' | 'name' | 'firstName' | 'lastName' | 'phone' | 'createdAt' | 'lessonNotes' | 'payments'
+  | 'id'
+  | 'name'
+  | 'firstName'
+  | 'lastName'
+  | 'phone'
+  | 'createdAt'
+  | 'lessonNotes'
+  | 'payments'
+  | 'file'
+  | 'personal'
+  | 'tests'
+  | 'taskProgress'
+  | 'prices'
 > & {
   /** The student's own account, found with findStudentAccount. */
   profileId: string;
@@ -215,7 +255,7 @@ type LessonNoteRow = { id: string; body: string; created_at: string; shared_with
 
 type PaymentRow = { id: string; amount: number; method: PaymentMethod; paid_at: string; note: string };
 
-type StudentRow = {
+type StudentRow = FileRow & {
   id: string;
   first_name: string;
   last_name: string;
@@ -232,6 +272,10 @@ type StudentRow = {
   removal_note: string;
   lesson_notes: LessonNoteRow[];
   payments: PaymentRow[];
+  profile: PersonalRow | null;
+  student_tests: TestRow[];
+  student_task_progress: { task_id: number; status: Exclude<TaskStatus, 'not_started'> }[];
+  student_prices: { lesson_type_id: string; price: number }[];
 };
 
 type BalanceRow = {
@@ -241,7 +285,12 @@ type BalanceRow = {
 };
 
 const NOTE_COLUMNS = 'id, body, created_at, shared_with_student';
-const STUDENT_COLUMNS = `*, lesson_notes(${NOTE_COLUMNS}), payments(id, amount, method, paid_at, note)`;
+const STUDENT_COLUMNS =
+  `id, first_name, last_name, phone, id_number, license_category, transmission, prior_lessons, ` +
+  `opening_balance, created_at, removed_at, removal_reason, removal_note, ${FILE_COLUMNS}, ` +
+  `lesson_notes(${NOTE_COLUMNS}), payments(id, amount, method, paid_at, note), ` +
+  `profile:profiles(${PERSONAL_COLUMNS}), student_tests(${TEST_COLUMNS}), ` +
+  `student_task_progress(task_id, status), student_prices(lesson_type_id, price)`;
 const PAYMENT_COLUMNS = 'id, amount, method, paid_at, note';
 
 function toNote(row: LessonNoteRow): LessonNote {
@@ -270,6 +319,11 @@ function toStudent(row: StudentRow, balance?: BalanceRow): Student {
       row.removed_at && row.removal_reason
         ? { removedAt: new Date(row.removed_at), reason: row.removal_reason, note: row.removal_note }
         : undefined,
+    file: toFile(row),
+    personal: row.profile ? toPersonal(row.profile) : null,
+    tests: row.student_tests.map(toTest).sort((a, b) => b.scheduledAt.getTime() - a.scheduledAt.getTime()),
+    taskProgress: Object.fromEntries(row.student_task_progress.map((p) => [p.task_id, p.status])),
+    prices: Object.fromEntries(row.student_prices.map((p) => [p.lesson_type_id, p.price])),
     lessonNotes: [...row.lesson_notes]
       .sort((a, b) => b.created_at.localeCompare(a.created_at))
       .map(toNote),
@@ -292,6 +346,20 @@ async function fetchStudents() {
   }
   const byStudent = new Map(balances.data.map((row) => [row.student_id, row]));
   return { students: students.data.map((row) => toStudent(row, byStudent.get(row.id))), failed: false };
+}
+
+/** One student, e.g. after their details changed. */
+async function fetchStudent(id: string) {
+  const [student, balance] = await Promise.all([
+    supabase.from('students').select(STUDENT_COLUMNS).eq('id', id).single<StudentRow>(),
+    supabase
+      .from('student_balances')
+      .select('student_id, lessons_completed, balance')
+      .eq('student_id', id)
+      .maybeSingle<BalanceRow>(),
+  ]);
+  if (student.error || !student.data) return null;
+  return toStudent(student.data, balance.data ?? undefined);
 }
 
 async function fetchBalances() {
@@ -330,8 +398,16 @@ type StudentsContextValue = {
   addLessonNote: (studentId: string, text: string, shared?: boolean) => Promise<string | null>;
   /** Shows or hides a note in the student app. Returns an error in Hebrew, or null. */
   setNoteShared: (studentId: string, noteId: string, shared: boolean) => Promise<string | null>;
-  /** Marks whether the student passed the theory test. Returns an error in Hebrew, or null. */
-  setTheoryPassed: (studentId: string, passed: boolean) => Promise<string | null>;
+  /** Saves part of the teacher's file. Returns an error in Hebrew, or null. */
+  updateFile: (studentId: string, changes: Partial<StudentFile>) => Promise<string | null>;
+  /** Adds a test (no id) or updates one. Returns an error in Hebrew, or null. */
+  saveTest: (studentId: string, test: Omit<StudentTest, 'id'>, testId?: string) => Promise<string | null>;
+  deleteTest: (studentId: string, testId: string) => Promise<string | null>;
+  setTaskStatus: (studentId: string, taskId: number, status: TaskStatus) => Promise<string | null>;
+  /** The student's own price for a lesson type, or null to go back to the usual price. */
+  setStudentPrice: (studentId: string, lessonTypeId: string, price: number | null) => Promise<string | null>;
+  /** Loads one student again, e.g. after their addresses or contacts changed. */
+  reloadStudent: (studentId: string) => Promise<void>;
   /** Returns an error message in Hebrew, or null on success. */
   addPayment: (studentId: string, payment: NewPayment) => Promise<string | null>;
   /** Saves the student and returns it. Throws StudentSaveError. */
@@ -412,8 +488,8 @@ export function StudentsProvider({ children }: PropsWithChildren) {
         prior_lessons: input.lessonsCompleted,
         opening_balance: input.balance,
       })
-      .select('*')
-      .single<Omit<StudentRow, 'lesson_notes' | 'payments'>>();
+      .select(STUDENT_COLUMNS)
+      .single<StudentRow>();
 
     if (insertError || !data) {
       switch (insertError?.code) {
@@ -457,7 +533,7 @@ export function StudentsProvider({ children }: PropsWithChildren) {
     }
 
     // A new student has no lessons or payments yet, so the opening values are the balance.
-    const student = toStudent({ ...data, lesson_notes: notes, payments: [] });
+    const student = toStudent({ ...data, lesson_notes: notes });
     setStudents((current) => [student, ...current]);
     return student;
   };
@@ -500,16 +576,94 @@ export function StudentsProvider({ children }: PropsWithChildren) {
     return null;
   };
 
-  const setTheoryPassed = async (studentId: string, passed: boolean) => {
+  const patchStudent = (studentId: string, update: (student: Student) => Student) =>
+    setStudents((current) => current.map((student) => (student.id === studentId ? update(student) : student)));
+
+  const updateFile = async (studentId: string, changes: Partial<StudentFile>) => {
     const { error: updateError } = await supabase
       .from('students')
-      .update({ theory_passed: passed })
+      .update(toFileColumns(changes))
       .eq('id', studentId);
-    if (updateError) return 'העדכון נכשל. יש לנסות שוב.';
-    setStudents((current) =>
-      current.map((student) => (student.id === studentId ? { ...student, theoryPassed: passed } : student))
-    );
+    if (updateError) return 'שמירת התיק נכשלה. יש לנסות שוב.';
+    patchStudent(studentId, (student) => ({
+      ...student,
+      file: { ...student.file, ...changes },
+      theoryPassed: changes.theoryPassed ?? student.theoryPassed,
+    }));
     return null;
+  };
+
+  const saveTest = async (studentId: string, test: Omit<StudentTest, 'id'>, testId?: string) => {
+    const columns = toTestColumns(test);
+    const result = testId
+      ? await supabase.from('student_tests').update(columns).eq('id', testId).select(TEST_COLUMNS).single<TestRow>()
+      : await supabase
+          .from('student_tests')
+          .insert({ ...columns, student_id: studentId })
+          .select(TEST_COLUMNS)
+          .single<TestRow>();
+    if (result.error || !result.data) return 'שמירת הטסט נכשלה. יש לנסות שוב.';
+    const saved = toTest(result.data);
+    patchStudent(studentId, (student) => ({
+      ...student,
+      tests: [...student.tests.filter((t) => t.id !== saved.id), saved].sort(
+        (a, b) => b.scheduledAt.getTime() - a.scheduledAt.getTime()
+      ),
+    }));
+    return null;
+  };
+
+  const deleteTest = async (studentId: string, testId: string) => {
+    const { error: deleteError } = await supabase.from('student_tests').delete().eq('id', testId);
+    if (deleteError) return 'מחיקת הטסט נכשלה. יש לנסות שוב.';
+    patchStudent(studentId, (student) => ({ ...student, tests: student.tests.filter((t) => t.id !== testId) }));
+    return null;
+  };
+
+  const setTaskStatus = async (studentId: string, taskId: number, status: TaskStatus) => {
+    const { error: saveError } =
+      status === 'not_started'
+        ? await supabase.from('student_task_progress').delete().eq('student_id', studentId).eq('task_id', taskId)
+        : await supabase
+            .from('student_task_progress')
+            .upsert({ student_id: studentId, task_id: taskId, status }, { onConflict: 'student_id,task_id' });
+    if (saveError) return 'העדכון נכשל. יש לנסות שוב.';
+    patchStudent(studentId, (student) => {
+      const taskProgress = { ...student.taskProgress };
+      if (status === 'not_started') delete taskProgress[taskId];
+      else taskProgress[taskId] = status;
+      return { ...student, taskProgress };
+    });
+    return null;
+  };
+
+  const setStudentPrice = async (studentId: string, lessonTypeId: string, price: number | null) => {
+    const { error: saveError } =
+      price === null
+        ? await supabase
+            .from('student_prices')
+            .delete()
+            .eq('student_id', studentId)
+            .eq('lesson_type_id', lessonTypeId)
+        : await supabase
+            .from('student_prices')
+            .upsert(
+              { student_id: studentId, lesson_type_id: lessonTypeId, price },
+              { onConflict: 'student_id,lesson_type_id' }
+            );
+    if (saveError) return 'שמירת המחיר נכשלה. יש לנסות שוב.';
+    patchStudent(studentId, (student) => {
+      const prices = { ...student.prices };
+      if (price === null) delete prices[lessonTypeId];
+      else prices[lessonTypeId] = price;
+      return { ...student, prices };
+    });
+    return null;
+  };
+
+  const reloadStudent = async (studentId: string) => {
+    const student = await fetchStudent(studentId);
+    if (student) patchStudent(studentId, () => student);
   };
 
   const addPayment = async (studentId: string, payment: NewPayment): Promise<string | null> => {
@@ -573,7 +727,12 @@ export function StudentsProvider({ children }: PropsWithChildren) {
         refreshBalances,
         addLessonNote,
         setNoteShared,
-        setTheoryPassed,
+        updateFile,
+        saveTest,
+        deleteTest,
+        setTaskStatus,
+        setStudentPrice,
+        reloadStudent,
         addPayment,
         addStudent,
         removeStudent,
@@ -644,9 +803,11 @@ export function useSetNoteShared() {
   return useStudentsContext().setNoteShared;
 }
 
-/** Mark whether a student passed the theory test. Returns an error in Hebrew, or null. */
-export function useSetTheoryPassed() {
-  return useStudentsContext().setTheoryPassed;
+/** Changes to the teacher's file on a student: licence file, tests, tasks, prices. */
+export function useStudentFileActions() {
+  const { updateFile, saveTest, deleteTest, setTaskStatus, setStudentPrice, reloadStudent } =
+    useStudentsContext();
+  return { updateFile, saveTest, deleteTest, setTaskStatus, setStudentPrice, reloadStudent };
 }
 
 /** Record a payment from a student. Returns an error in Hebrew, or null. */

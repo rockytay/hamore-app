@@ -10,6 +10,10 @@ export default function StudentsLayout() {
     <Stack>
       <Stack.Screen name="index" options={{ headerShown: false, title: 'תלמידים' }} />
       <Stack.Screen name="[id]" options={{ title: 'פרטי תלמיד', headerBackTitle: 'תלמידים' }} />
+      <Stack.Screen name="file/[id]" options={{ title: 'תיק רישוי ותשלום', headerBackTitle: 'חזרה' }} />
+      <Stack.Screen name="tests/[id]" options={{ title: 'מבחנים', headerBackTitle: 'חזרה' }} />
+      <Stack.Screen name="tasks/[id]" options={{ title: 'כרטיס משימות', headerBackTitle: 'חזרה' }} />
+      <Stack.Screen name="personal/[id]" options={{ title: 'פרטים אישיים ואיסוף', headerBackTitle: 'חזרה' }} />
     </Stack>
   );
 }

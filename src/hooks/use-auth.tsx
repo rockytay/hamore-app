@@ -1,5 +1,7 @@
 import type { Session as SupabaseSession } from '@supabase/supabase-js';
+import Constants from 'expo-constants';
 import * as Linking from 'expo-linking';
+import { Platform } from 'react-native';
 import {
   createContext,
   useCallback,
@@ -10,6 +12,7 @@ import {
   type PropsWithChildren,
 } from 'react';
 
+import { toDayString, type Language } from '@/hooks/student-file';
 import type { CurrentUser } from '@/hooks/use-current-user';
 import type { LicenseCategory, Transmission } from '@/hooks/use-students';
 import { supabase } from '@/lib/supabase';
@@ -49,6 +52,12 @@ export type SignUpInput = {
    */
   driverLicenseNumber?: string;
   teacherLicenseNumber?: string;
+  /** Students only: for the age eligibility checks and the parent contact rule. */
+  birthDate?: Date;
+  preferredLanguage?: Language;
+  /** Students only: agreed that their details are kept (privacy law). Required. */
+  privacyConsent?: boolean;
+  marketingConsent?: boolean;
 };
 
 /** Created by `npm run seed:dev`; the sign-in screen offers them in development builds. */
@@ -71,7 +80,9 @@ type ProfileRow = {
   lesson_duration_min: number;
   debt_warnings: boolean;
   lesson_reminders: boolean;
-  organization: { id: string; plan_id: string; plan_renews_at: string } | null;
+  green_form_valid_years: number;
+  theory_valid_years: number;
+  organization:{ id: string; plan_id: string; plan_renews_at: string } | null;
 };
 
 const PROFILE_COLUMNS = '*, organization:organizations(id, plan_id, plan_renews_at)';
@@ -102,6 +113,10 @@ function toSession(row: ProfileRow): Session {
       lessonPrice: row.lesson_price,
       lessonDurationMin: row.lesson_duration_min,
       settings: { debtWarnings: row.debt_warnings, lessonReminders: row.lesson_reminders },
+      validity: {
+        greenFormValidYears: row.green_form_valid_years ?? 3,
+        theoryValidYears: row.theory_valid_years ?? 5,
+      },
       subscription: {
         planId: row.organization?.plan_id ?? 'basic',
         renewsAt: new Date(row.organization?.plan_renews_at ?? Date.now()),
@@ -127,6 +142,10 @@ function toProfileColumns(changes: Partial<CurrentUser>) {
   if (changes.settings !== undefined) {
     columns.debt_warnings = changes.settings.debtWarnings;
     columns.lesson_reminders = changes.settings.lessonReminders;
+  }
+  if (changes.validity !== undefined) {
+    columns.green_form_valid_years = changes.validity.greenFormValidYears;
+    columns.theory_valid_years = changes.validity.theoryValidYears;
   }
   return columns;
 }
@@ -175,7 +194,17 @@ type AuthContextValue = {
   signOut: () => Promise<void>;
   /** Saves the teacher's details. Returns an error message in Hebrew, or null on success. */
   updateTeacher: (changes: Partial<CurrentUser>) => Promise<string | null>;
+  /**
+   * Checks the password, saves the feedback and deletes the account for good, then signs
+   * out. Returns an error message in Hebrew, or null once deleted.
+   */
+  deleteAccount: (password: string, feedback: DeletionFeedback) => Promise<string | null>;
 };
+
+/** Why the user deletes their account. Kept for the Hamore team; see supabase/migrations. */
+export type DeletionFeedback =
+  | { role: 'student'; reason: 'passed_test' | 'other'; details: string; improvements: string }
+  | { role: 'teacher'; satisfied: boolean; details: string; improvements: string };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
@@ -273,6 +302,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
           phone: input.phone.trim(),
           driver_license_number: input.driverLicenseNumber ?? '',
           teacher_license_number: input.teacherLicenseNumber ?? '',
+          birth_date: toDayString(input.birthDate ?? null) ?? '',
+          preferred_language: input.preferredLanguage ?? 'he',
+          privacy_consent: input.privacyConsent ? 'true' : 'false',
+          marketing_consent: input.marketingConsent ? 'true' : 'false',
         },
       },
     });
@@ -317,7 +350,38 @@ export function AuthProvider({ children }: PropsWithChildren) {
     return null;
   };
 
-  const value: AuthContextValue = { loading, session, signIn, signUp, signOut, updateTeacher };
+  const deleteAccount: AuthContextValue['deleteAccount'] = async (password, feedback) => {
+    if (!session) return 'אין משתמש מחובר.';
+    // Deleting can't be undone, so the password is checked first.
+    requiredRole.current = session.role;
+    const check = await supabase.auth.signInWithPassword({ email: session.profile.email, password });
+    if (check.error) {
+      return check.error.message.toLowerCase().includes('invalid login credentials')
+        ? 'הסיסמה שגויה.'
+        : translateAuthError(check.error);
+    }
+
+    const { error } = await supabase.rpc('delete_my_account', {
+      p_reason: feedback.role === 'student' ? feedback.reason : null,
+      p_satisfied: feedback.role === 'teacher' ? feedback.satisfied : null,
+      p_details: feedback.details.trim(),
+      p_improvements: feedback.improvements.trim(),
+      p_app_version: Constants.expoConfig?.version ?? '',
+      p_platform: Platform.OS,
+    });
+    if (error) {
+      if (__DEV__) console.warn('Delete account failed:', error.code, error.message);
+      if (error.code === 'HM021') return 'יש להשלים את השאלון לפני המחיקה.';
+      return 'מחיקת החשבון נכשלה. יש לבדוק את החיבור ולנסות שוב.';
+    }
+
+    // The login no longer exists on the server; clear it from this device.
+    await supabase.auth.signOut({ scope: 'local' });
+    setSession(null);
+    return null;
+  };
+
+  const value: AuthContextValue = { loading, session, signIn, signUp, signOut, updateTeacher, deleteAccount };
 
   return <AuthContext value={value}>{children}</AuthContext>;
 }
