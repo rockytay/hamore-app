@@ -12,9 +12,16 @@ import {
   type PropsWithChildren,
 } from 'react';
 
-import { toDayString, type Language } from '@/hooks/student-file';
+import {
+  toDayString,
+  type AvailabilityWindow,
+  type Language,
+  type PriorLicense,
+  type ReferralSource,
+  type ReminderChannel,
+} from '@/hooks/student-file';
 import type { CurrentUser } from '@/hooks/use-current-user';
-import type { LicenseCategory, Transmission } from '@/hooks/use-students';
+import type { LicenseCategory, PaymentMethod, Transmission } from '@/hooks/use-students';
 import { supabase } from '@/lib/supabase';
 
 export type Role = 'teacher' | 'student';
@@ -64,6 +71,27 @@ export type SignUpInput = {
   address?: { street: string; houseNumber: string; city: string; pickupNotes: string };
   /** Students under 18 only: a parent to contact. Required for them. */
   parent?: { name: string; phone: string; relation: string };
+  /**
+   * Students only: their side of the licence file. The teacher's add-student form starts
+   * from it; whatever the teacher leaves empty is copied into their file.
+   */
+  licence?: {
+    category: LicenseCategory;
+    transmission: Transmission;
+    greenFormIssuedAt: Date | null;
+    eyeTestDone: boolean;
+    needsGlasses: boolean;
+    healthDeclarationDone: boolean;
+    theoryPassedAt: Date | null;
+    priorLicense: PriorLicense;
+    specialRestrictions: string;
+  };
+  preferredPaymentMethod?: PaymentMethod | null;
+  referralSource?: ReferralSource | null;
+  reminderChannel?: ReminderChannel;
+  reminderHoursBefore?: number;
+  /** When the student can usually take lessons. */
+  availability?: Omit<AvailabilityWindow, 'id'>[];
 };
 
 /** Created by `npm run seed:dev`; the sign-in screen offers them in development builds. */
@@ -325,6 +353,26 @@ export function AuthProvider({ children }: PropsWithChildren) {
           parent_name: input.parent?.name.trim() ?? '',
           parent_phone: input.parent?.phone.trim() ?? '',
           parent_relation: input.parent?.relation.trim() ?? '',
+          ...(input.licence && {
+            license_category: input.licence.category,
+            transmission: input.licence.transmission,
+            green_form_issued_at: toDayString(input.licence.greenFormIssuedAt) ?? '',
+            eye_test_done: input.licence.eyeTestDone ? 'true' : 'false',
+            needs_glasses: input.licence.needsGlasses ? 'true' : 'false',
+            health_declaration_done: input.licence.healthDeclarationDone ? 'true' : 'false',
+            theory_passed_at: toDayString(input.licence.theoryPassedAt) ?? '',
+            prior_license: input.licence.priorLicense,
+            special_restrictions: input.licence.specialRestrictions.trim(),
+          }),
+          preferred_payment_method: input.preferredPaymentMethod ?? '',
+          referral_source: input.referralSource ?? '',
+          reminder_channel: input.reminderChannel ?? 'push',
+          reminder_hours_before: String(input.reminderHoursBefore ?? 24),
+          availability: (input.availability ?? []).map((window) => ({
+            weekday: window.weekday,
+            start_min: window.startMin,
+            end_min: window.endMin,
+          })),
         },
       },
     });

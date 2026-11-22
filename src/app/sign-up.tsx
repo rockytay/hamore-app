@@ -11,12 +11,35 @@ import {
   PrimaryButton,
   RoleToggle,
 } from '@/components/auth-form';
-import { ChoiceChips, optionsOf, ToggleRow } from '@/components/form-ui';
+import { ChoiceChips, FieldHint, MultiChoiceChips, optionsOf, ToggleRow } from '@/components/form-ui';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
-import { getAge, LANGUAGE_LABELS, parseTypedDate, type Language } from '@/hooks/student-file';
+import {
+  getAge,
+  LANGUAGE_LABELS,
+  parseMinutes,
+  parseTypedDate,
+  PRIOR_LICENSE_LABELS,
+  REFERRAL_LABELS,
+  REMINDER_CHANNEL_LABELS,
+  WEEKDAY_LABELS,
+  type Language,
+  type PriorLicense,
+  type ReferralSource,
+  type ReminderChannel,
+} from '@/hooks/student-file';
 import { useAuth, type Role, type SignUpInput } from '@/hooks/use-auth';
-import { formatPhone, isValidIsraeliId, isValidPhone } from '@/hooks/use-students';
+import {
+  formatPhone,
+  isValidIsraeliId,
+  isValidPhone,
+  LICENSE_CATEGORIES,
+  PAYMENT_METHOD_LABELS,
+  TRANSMISSION_LABELS,
+  type LicenseCategory,
+  type PaymentMethod,
+  type Transmission,
+} from '@/hooks/use-students';
 import { getPasswordChecks, MIN_PASSWORD_LENGTH, validatePassword } from '@/utils/password';
 
 const styles = StyleSheet.create({
@@ -25,6 +48,10 @@ const styles = StyleSheet.create({
   },
   wide: {
     flex: 2,
+  },
+  section: {
+    gap: Spacing.two,
+    marginTop: Spacing.two,
   },
   checks: {
     flexDirection: 'row',
@@ -52,6 +79,31 @@ type Draft = Pick<SignUpInput, 'firstName' | 'lastName' | 'phone' | 'email' | 'p
   parentName: string;
   parentPhone: string;
   parentRelation: string;
+  licenseCategory: LicenseCategory;
+  /** Null until chosen: required. */
+  transmission: Transmission | null;
+  /** Null until answered: required. */
+  hasGreenForm: boolean | null;
+  /** DD/MM/YYYY */
+  greenFormIssuedAt: string;
+  eyeTestDone: boolean;
+  needsGlasses: boolean;
+  healthDeclarationDone: boolean;
+  /** Null until answered: required. */
+  theoryPassed: boolean | null;
+  /** DD/MM/YYYY */
+  theoryPassedAt: string;
+  priorLicense: PriorLicense;
+  specialRestrictions: string;
+  /** 0 = Sunday … 6 = Saturday. */
+  availableDays: number[];
+  /** HH:MM */
+  availableFrom: string;
+  availableTo: string;
+  reminderChannel: ReminderChannel;
+  reminderHoursBefore: number;
+  preferredPaymentMethod: PaymentMethod | null;
+  referralSource: ReferralSource | null;
 };
 
 const EMPTY_DRAFT: Draft = {
@@ -75,12 +127,72 @@ const EMPTY_DRAFT: Draft = {
   parentName: '',
   parentPhone: '',
   parentRelation: '',
+  licenseCategory: 'B',
+  transmission: null,
+  hasGreenForm: null,
+  greenFormIssuedAt: '',
+  eyeTestDone: false,
+  needsGlasses: false,
+  healthDeclarationDone: false,
+  theoryPassed: null,
+  theoryPassedAt: '',
+  priorLicense: 'none',
+  specialRestrictions: '',
+  availableDays: [],
+  availableFrom: '',
+  availableTo: '',
+  reminderChannel: 'push',
+  reminderHoursBefore: 24,
+  preferredPaymentMethod: null,
+  referralSource: null,
 };
+
+const YES_NO: { value: 'yes' | 'no'; label: string }[] = [
+  { value: 'yes', label: 'כן' },
+  { value: 'no', label: 'לא' },
+];
+
+const yesNo = (value: boolean | null) => (value === null ? null : value ? 'yes' : 'no');
+
+const REMINDER_TIMES = [
+  { value: 1, label: 'שעה לפני' },
+  { value: 2, label: 'שעתיים לפני' },
+  { value: 12, label: '12 שעות לפני' },
+  { value: 24, label: 'יום לפני' },
+  { value: 48, label: 'יומיים לפני' },
+];
+
+/** Sunday first, like WEEKDAY_LABELS. */
+const DAY_OPTIONS = WEEKDAY_LABELS.map((label, weekday) => ({ value: weekday, label }));
+
+const CATEGORY_OPTIONS = (Object.keys(LICENSE_CATEGORIES) as LicenseCategory[]).map((value) => ({
+  value,
+  label: value,
+}));
+
+/** Keeps only what a typed date can contain. */
+const cleanDate = (text: string) => text.replace(/[^\d/.-]/g, '').slice(0, 10);
+
+/** A typed past date: an error message, or null when it is fine. */
+function checkPastDate(text: string, what: string) {
+  const date = parseTypedDate(text);
+  if (!date) return `יש להזין ${what} (DD/MM/YYYY).`;
+  if (date > new Date()) return `${what} עוד לא הגיע.`;
+  return null;
+}
 
 /** Under 18 a parent contact is required (from the typed birth date, once it is complete). */
 function isMinor(birthDate: string) {
   const born = parseTypedDate(birthDate);
   return born !== null && getAge(born) < 18;
+}
+
+/** The chosen days and hours as weekly windows, or none when not filled in. */
+function availabilityOf(draft: Draft) {
+  const startMin = parseMinutes(draft.availableFrom);
+  const endMin = parseMinutes(draft.availableTo);
+  if (startMin === null || endMin === null || endMin <= startMin) return [];
+  return draft.availableDays.map((weekday) => ({ weekday, startMin, endMin }));
 }
 
 /** Students younger than this can't start anything yet; older than this is a typo. */
@@ -103,6 +215,25 @@ function validate(draft: Draft, role: Role) {
       if (!draft.parentName.trim()) return 'מתחת לגיל 18 יש למלא את שם ההורה.';
       if (!isValidPhone(draft.parentPhone)) return 'יש להזין מספר נייד תקין של ההורה (05X-XXXXXXX).';
       if (!draft.parentRelation.trim()) return 'יש לציין את הקרבה של ההורה (אמא, אבא...).';
+    }
+    if (!draft.transmission) return 'יש לבחור תיבת הילוכים: ידני או אוטומט.';
+    if (draft.hasGreenForm === null) return 'יש לציין אם כבר יש לך טופס ירוק.';
+    if (draft.hasGreenForm) {
+      const greenError = checkPastDate(draft.greenFormIssuedAt, 'תאריך הנפקת הטופס הירוק');
+      if (greenError) return greenError;
+    }
+    if (draft.theoryPassed === null) return 'יש לציין אם עברת את מבחן התאוריה.';
+    if (draft.theoryPassed) {
+      const theoryError = checkPastDate(draft.theoryPassedAt, 'תאריך מבחן התאוריה');
+      if (theoryError) return theoryError;
+    }
+    const from = parseMinutes(draft.availableFrom);
+    const to = parseMinutes(draft.availableTo);
+    const typedHours = draft.availableFrom.trim() !== '' || draft.availableTo.trim() !== '';
+    if (draft.availableDays.length > 0 || typedHours) {
+      if (draft.availableDays.length === 0) return 'יש לבחור באילו ימים נוח לך ללמוד.';
+      if (from === null || to === null) return 'יש להזין שעות זמינות בפורמט 16:00.';
+      if (to <= from) return 'שעת הסיום צריכה להיות אחרי שעת ההתחלה.';
     }
   }
   if (role === 'teacher' && !draft.driverLicenseNumber) {
@@ -172,6 +303,22 @@ export default function SignUpScreen() {
         parent: isMinor(draft.birthDate)
           ? { name: draft.parentName, phone: formatPhone(draft.parentPhone), relation: draft.parentRelation }
           : undefined,
+        licence: {
+          category: draft.licenseCategory,
+          transmission: draft.transmission ?? 'manual',
+          greenFormIssuedAt: draft.hasGreenForm ? parseTypedDate(draft.greenFormIssuedAt) : null,
+          eyeTestDone: draft.eyeTestDone,
+          needsGlasses: draft.needsGlasses,
+          healthDeclarationDone: draft.healthDeclarationDone,
+          theoryPassedAt: draft.theoryPassed ? parseTypedDate(draft.theoryPassedAt) : null,
+          priorLicense: draft.priorLicense,
+          specialRestrictions: draft.specialRestrictions,
+        },
+        preferredPaymentMethod: draft.preferredPaymentMethod,
+        referralSource: draft.referralSource,
+        reminderChannel: draft.reminderChannel,
+        reminderHoursBefore: draft.reminderHoursBefore,
+        availability: availabilityOf(draft),
       }),
     });
     setBusy(false);
@@ -322,6 +469,170 @@ export default function SignUpScreen() {
                 surface="backgroundElement"
               />
             </View>
+
+            <View style={styles.section}>
+              <ThemedText type="smallBold">רישיון (תיק משרד התחבורה)</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                דרגת רישיון
+              </ThemedText>
+              <ChoiceChips
+                options={CATEGORY_OPTIONS}
+                value={draft.licenseCategory}
+                onChange={(licenseCategory) => licenseCategory && change({ licenseCategory })}
+                surface="backgroundElement"
+              />
+              <FieldHint>{LICENSE_CATEGORIES[draft.licenseCategory]}</FieldHint>
+              <ThemedText type="small" themeColor="textSecondary">
+                תיבת הילוכים
+              </ThemedText>
+              <ChoiceChips
+                options={optionsOf(TRANSMISSION_LABELS)}
+                value={draft.transmission}
+                onChange={(transmission) => transmission && change({ transmission })}
+                surface="backgroundElement"
+              />
+              <ThemedText type="small" themeColor="textSecondary">
+                יש לך טופס ירוק (הצהרה רפואית)?
+              </ThemedText>
+              <ChoiceChips
+                options={YES_NO}
+                value={yesNo(draft.hasGreenForm)}
+                onChange={(answer) => answer && change({ hasGreenForm: answer === 'yes' })}
+                surface="backgroundElement"
+              />
+              {draft.hasGreenForm && (
+                <FormField
+                  label="תאריך הנפקת הטופס הירוק"
+                  value={draft.greenFormIssuedAt}
+                  onChangeText={(text) => change({ greenFormIssuedAt: cleanDate(text) })}
+                  placeholder="DD/MM/YYYY · בתוקף 5 שנים"
+                  keyboardType="numbers-and-punctuation"
+                />
+              )}
+              <ToggleRow
+                label="עשיתי בדיקת ראייה"
+                value={draft.eyeTestDone}
+                onChange={(eyeTestDone) => change({ eyeTestDone })}
+              />
+              <ToggleRow
+                label="אני חייב/ת לנהוג עם משקפיים או עדשות"
+                hint="מגבלה שרשומה ברישיון"
+                value={draft.needsGlasses}
+                onChange={(needsGlasses) => change({ needsGlasses })}
+              />
+              <ToggleRow
+                label="הצהרת הבריאות שלי אושרה"
+                hint="כן/לא בלבד. לא שומרים פרטים רפואיים."
+                value={draft.healthDeclarationDone}
+                onChange={(healthDeclarationDone) => change({ healthDeclarationDone })}
+              />
+              <ThemedText type="small" themeColor="textSecondary">
+                עברת את מבחן התאוריה?
+              </ThemedText>
+              <ChoiceChips
+                options={YES_NO}
+                value={yesNo(draft.theoryPassed)}
+                onChange={(answer) => answer && change({ theoryPassed: answer === 'yes' })}
+                surface="backgroundElement"
+              />
+              {draft.theoryPassed && (
+                <FormField
+                  label="תאריך מבחן התאוריה"
+                  value={draft.theoryPassedAt}
+                  onChangeText={(text) => change({ theoryPassedAt: cleanDate(text) })}
+                  placeholder="DD/MM/YYYY · בתוקף 5 שנים"
+                  keyboardType="numbers-and-punctuation"
+                />
+              )}
+              <ThemedText type="small" themeColor="textSecondary">
+                רישיון קודם
+              </ThemedText>
+              <ChoiceChips
+                options={optionsOf(PRIOR_LICENSE_LABELS)}
+                value={draft.priorLicense}
+                onChange={(priorLicense) => priorLicense && change({ priorLicense })}
+                surface="backgroundElement"
+              />
+              <FormField
+                label="מגבלות מיוחדות (לא חובה)"
+                value={draft.specialRestrictions}
+                onChangeText={(text) => change({ specialRestrictions: text.slice(0, 200) })}
+                placeholder="למשל: רכב מותאם"
+              />
+            </View>
+
+            <View style={styles.section}>
+              <ThemedText type="smallBold">מתי נוח לך ללמוד? (לא חובה)</ThemedText>
+              <MultiChoiceChips
+                options={DAY_OPTIONS}
+                values={draft.availableDays}
+                onChange={(availableDays) => change({ availableDays })}
+                surface="backgroundElement"
+              />
+              <View style={authFormStyles.row}>
+                <View style={authFormStyles.rowItem}>
+                  <FormField
+                    label="משעה"
+                    value={draft.availableFrom}
+                    onChangeText={(availableFrom) => change({ availableFrom })}
+                    placeholder="16:00"
+                    keyboardType="numbers-and-punctuation"
+                  />
+                </View>
+                <View style={authFormStyles.rowItem}>
+                  <FormField
+                    label="עד שעה"
+                    value={draft.availableTo}
+                    onChangeText={(availableTo) => change({ availableTo })}
+                    placeholder="20:00"
+                    keyboardType="numbers-and-punctuation"
+                  />
+                </View>
+              </View>
+              <ThemedText type="small" themeColor="textSecondary">
+                תזכורת לשיעור
+              </ThemedText>
+              <ChoiceChips
+                options={optionsOf(REMINDER_CHANNEL_LABELS)}
+                value={draft.reminderChannel}
+                onChange={(reminderChannel) => reminderChannel && change({ reminderChannel })}
+                surface="backgroundElement"
+              />
+              <ChoiceChips
+                options={REMINDER_TIMES}
+                value={draft.reminderHoursBefore}
+                onChange={(reminderHoursBefore) => reminderHoursBefore && change({ reminderHoursBefore })}
+                surface="backgroundElement"
+              />
+            </View>
+
+            <View style={styles.section}>
+              <ThemedText type="smallBold">תשלום והיכרות (לא חובה)</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                אמצעי תשלום מועדף
+              </ThemedText>
+              <ChoiceChips
+                options={optionsOf(PAYMENT_METHOD_LABELS)}
+                value={draft.preferredPaymentMethod}
+                onChange={(preferredPaymentMethod) => change({ preferredPaymentMethod })}
+                allowNone
+                surface="backgroundElement"
+              />
+              <ThemedText type="small" themeColor="textSecondary">
+                איך הגעת אל המורה?
+              </ThemedText>
+              <ChoiceChips
+                options={optionsOf(REFERRAL_LABELS)}
+                value={draft.referralSource}
+                onChange={(referralSource) => change({ referralSource })}
+                allowNone
+                surface="backgroundElement"
+              />
+            </View>
+
+            <ThemedText type="smallBold" style={styles.section}>
+              פרטי התחברות
+            </ThemedText>
           </>
         )}
         <FormField

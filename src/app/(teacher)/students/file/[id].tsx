@@ -175,6 +175,12 @@ function FileForm({ student }: { student: Student }) {
             value={draft.priorLicense}
             onChange={(priorLicense) => priorLicense && change({ priorLicense })}
           />
+          <TextField
+            label="מגבלות מיוחדות"
+            value={draft.specialRestrictions}
+            onChange={(specialRestrictions) => change({ specialRestrictions: specialRestrictions.slice(0, 200) })}
+            placeholder="למשל: רכב מותאם"
+          />
         </Card>
       </Section>
 

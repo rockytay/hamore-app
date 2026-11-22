@@ -129,6 +129,8 @@ export type StudentFile = {
   theoryPassed: boolean;
   theoryPassedAt: Date | null;
   priorLicense: PriorLicense;
+  /** e.g. "רכב מותאם". Not a medical description. */
+  specialRestrictions: string;
   /** 1–5, the teacher's own rating. Never shown to the student. */
   testReadiness: number | null;
   paymentPlan: PaymentPlan;
@@ -148,6 +150,7 @@ export type FileRow = {
   theory_passed: boolean;
   theory_passed_at: string | null;
   prior_license: PriorLicense;
+  special_restrictions: string;
   test_readiness: number | null;
   payment_plan: PaymentPlan;
   payment_plan_note: string;
@@ -159,7 +162,7 @@ export type FileRow = {
 
 export const FILE_COLUMNS =
   'status, green_form_issued_at, eye_test_done, needs_glasses, health_declaration_done, theory_passed, ' +
-  'theory_passed_at, prior_license, test_readiness, payment_plan, payment_plan_note, ' +
+  'theory_passed_at, prior_license, special_restrictions, test_readiness, payment_plan, payment_plan_note, ' +
   'preferred_payment_method, payer, cancellation_notice_hours, referral_source';
 
 export function toFile(row: FileRow): StudentFile {
@@ -172,6 +175,7 @@ export function toFile(row: FileRow): StudentFile {
     theoryPassed: row.theory_passed,
     theoryPassedAt: parseDay(row.theory_passed_at),
     priorLicense: row.prior_license,
+    specialRestrictions: row.special_restrictions ?? '',
     testReadiness: row.test_readiness,
     paymentPlan: row.payment_plan,
     paymentPlanNote: row.payment_plan_note,
@@ -196,6 +200,7 @@ export function toFileColumns(changes: Partial<StudentFile>) {
   set('theoryPassed', 'theory_passed', changes.theoryPassed);
   set('theoryPassedAt', 'theory_passed_at', toDayString(changes.theoryPassedAt ?? null));
   set('priorLicense', 'prior_license', changes.priorLicense);
+  set('specialRestrictions', 'special_restrictions', changes.specialRestrictions?.trim());
   set('testReadiness', 'test_readiness', changes.testReadiness);
   set('paymentPlan', 'payment_plan', changes.paymentPlan);
   set('paymentPlanNote', 'payment_plan_note', changes.paymentPlanNote);

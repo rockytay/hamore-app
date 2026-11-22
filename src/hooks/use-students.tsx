@@ -11,6 +11,7 @@ import {
 import { useSession } from '@/hooks/use-auth';
 import {
   FILE_COLUMNS,
+  parseDay,
   TEST_COLUMNS,
   toFile,
   toFileColumns,
@@ -19,6 +20,8 @@ import {
   type Address,
   type Contact,
   type FileRow,
+  type PriorLicense,
+  type ReferralSource,
   type StudentFile,
   type StudentPersonal,
   type StudentTest,
@@ -204,6 +207,26 @@ export type StudentAccount = {
   isMinor: boolean;
   hasAddress: boolean;
   hasParent: boolean;
+  /**
+   * The student's own licence answers from sign-up, to start the form from. Null for
+   * accounts made before sign-up asked them.
+   */
+  answers: StudentAnswers | null;
+};
+
+/** What the student answered at sign-up about their licence file, payment and referral. */
+export type StudentAnswers = {
+  licenseCategory: LicenseCategory;
+  transmission: Transmission | null;
+  greenFormIssuedAt: Date | null;
+  eyeTestDone: boolean;
+  needsGlasses: boolean;
+  healthDeclarationDone: boolean;
+  theoryPassedAt: Date | null;
+  priorLicense: PriorLicense;
+  specialRestrictions: string;
+  preferredPaymentMethod: PaymentMethod | null;
+  referralSource: ReferralSource | null;
 };
 
 type StudentAccountRow = {
@@ -220,6 +243,19 @@ type StudentAccountRow = {
   is_minor?: boolean;
   has_address?: boolean;
   has_parent?: boolean;
+  // Missing on a database without the 20261121 update.
+  answered_licence?: boolean;
+  license_category?: LicenseCategory | null;
+  transmission?: Transmission | null;
+  green_form_issued_at?: string | null;
+  eye_test_done?: boolean;
+  needs_glasses?: boolean;
+  health_declaration_done?: boolean;
+  theory_passed_at?: string | null;
+  prior_license?: PriorLicense;
+  special_restrictions?: string;
+  preferred_payment_method?: PaymentMethod | null;
+  referral_source?: ReferralSource | null;
 };
 
 /**
@@ -247,6 +283,22 @@ export async function findStudentAccount(email: string): Promise<StudentAccount 
     isMinor: row.is_minor ?? false,
     hasAddress: row.has_address ?? false,
     hasParent: row.has_parent ?? false,
+    answers:
+      row.answered_licence && row.license_category
+        ? {
+            licenseCategory: row.license_category,
+            transmission: row.transmission ?? null,
+            greenFormIssuedAt: parseDay(row.green_form_issued_at ?? null),
+            eyeTestDone: row.eye_test_done ?? false,
+            needsGlasses: row.needs_glasses ?? false,
+            healthDeclarationDone: row.health_declaration_done ?? false,
+            theoryPassedAt: parseDay(row.theory_passed_at ?? null),
+            priorLicense: row.prior_license ?? 'none',
+            specialRestrictions: row.special_restrictions ?? '',
+            preferredPaymentMethod: row.preferred_payment_method ?? null,
+            referralSource: row.referral_source ?? null,
+          }
+        : null,
   };
 }
 

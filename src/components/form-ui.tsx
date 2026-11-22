@@ -156,6 +156,50 @@ export function ChoiceChips<T extends string | number>({
   );
 }
 
+/** Several choices, as chips that toggle on and off. */
+export function MultiChoiceChips<T extends string | number>({
+  options,
+  values,
+  onChange,
+  surface = 'background',
+}: {
+  options: { value: T; label: string }[];
+  values: T[];
+  onChange: (values: T[]) => void;
+  surface?: 'background' | 'backgroundElement';
+}) {
+  const theme = useTheme();
+  return (
+    <View style={styles.chips}>
+      {options.map((option) => {
+        const selected = values.includes(option.value);
+        return (
+          <Pressable
+            key={String(option.value)}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: selected }}
+            onPress={() =>
+              onChange(
+                selected
+                  ? values.filter((value) => value !== option.value)
+                  : options.map((o) => o.value).filter((value) => value === option.value || values.includes(value)),
+              )
+            }
+            style={({ pressed }) => [
+              styles.chip,
+              { backgroundColor: selected ? theme.accent : theme[surface] },
+              pressed && styles.pressed,
+            ]}>
+            <ThemedText type="small" style={selected ? styles.white : undefined}>
+              {option.label}
+            </ThemedText>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
 /** Record<value, label> → chip options. */
 export function optionsOf<T extends string>(labels: Record<T, string>) {
   return (Object.keys(labels) as T[]).map((value) => ({ value, label: labels[value] }));

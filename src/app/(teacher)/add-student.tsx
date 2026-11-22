@@ -71,6 +71,7 @@ type Form = {
   needsGlasses: boolean;
   healthDeclarationDone: boolean;
   priorLicense: PriorLicense;
+  specialRestrictions: string;
   /** Asked only when the student did not enter a birth date. */
   minorAnswer: boolean;
   street: string;
@@ -116,6 +117,7 @@ export default function AddStudentScreen() {
     needsGlasses: false,
     healthDeclarationDone: false,
     priorLicense: 'none',
+    specialRestrictions: '',
     minorAnswer: false,
     street: '',
     houseNumber: '',
@@ -193,8 +195,29 @@ export default function AddStudentScreen() {
       } else {
         Keyboard.dismiss();
         setAccount(found);
-        // A minor's lessons are usually paid by a parent.
-        if (found.isMinor) setForm((current) => ({ ...current, payer: 'parent' }));
+        const answers = found.answers;
+        setForm((current) => ({
+          ...current,
+          // A minor's lessons are usually paid by a parent.
+          payer: found.isMinor ? 'parent' : current.payer,
+          // Start from what the student answered at sign-up; the teacher confirms or corrects.
+          ...(answers && {
+            licenseCategory: answers.licenseCategory,
+            transmission: answers.transmission ?? current.transmission,
+            hasGreenForm: answers.greenFormIssuedAt !== null,
+            greenFormIssuedAt: answers.greenFormIssuedAt,
+            eyeTestDone: answers.eyeTestDone,
+            needsGlasses: answers.needsGlasses,
+            healthDeclarationDone: answers.healthDeclarationDone,
+            theoryPassed: answers.theoryPassedAt !== null,
+            theoryPassedAt: answers.theoryPassedAt,
+            priorLicense: answers.priorLicense,
+            specialRestrictions: answers.specialRestrictions,
+            preferredPaymentMethod: answers.preferredPaymentMethod,
+            referralSource: answers.referralSource,
+          }),
+        }));
+        if (answers && !teacherCategories.includes(answers.licenseCategory)) setShowAllCategories(true);
       }
     } catch (error) {
       const message =
@@ -274,6 +297,7 @@ export default function AddStudentScreen() {
           healthDeclarationDone: form.healthDeclarationDone,
           theoryPassedAt: form.theoryPassed ? form.theoryPassedAt : null,
           priorLicense: form.priorLicense,
+          specialRestrictions: form.specialRestrictions,
           paymentPlan: form.paymentPlan ?? 'per_lesson',
           payer: form.payer,
           preferredPaymentMethod: form.preferredPaymentMethod,
@@ -511,6 +535,9 @@ export default function AddStudentScreen() {
               )}
 
               <FormSection title="רישיון">
+                {account.answers && (
+                  <FieldHint>התלמיד/ה מילא/ה את פרטי הרישיון, הטופס הירוק והתאוריה בהרשמה. אפשר לתקן.</FieldHint>
+                )}
                 <Label>דרגת רישיון</Label>
                 <View style={styles.chips}>
                   {categories.map((category) => (
@@ -550,6 +577,12 @@ export default function AddStudentScreen() {
                   options={optionsOf(PRIOR_LICENSE_LABELS)}
                   value={form.priorLicense}
                   onChange={(value) => value && change('priorLicense', value)}
+                />
+                <TextField
+                  label="מגבלות מיוחדות (לא חובה)"
+                  value={form.specialRestrictions}
+                  onChange={(value) => change('specialRestrictions', value.slice(0, 200))}
+                  placeholder="למשל: רכב מותאם"
                 />
               </FormSection>
 
